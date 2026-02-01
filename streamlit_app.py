@@ -1,8 +1,14 @@
 import os
 import re
+import sys
 from typing import Optional
+from pathlib import Path
 import streamlit as st
 import pandas as pd
+
+BASE_DIR = Path(__file__).resolve().parent
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 from your_app.common.data_loader import load_item_data
 from your_app.common.query_utils import mask_for_query
@@ -14,10 +20,11 @@ from your_app.processing import sales_store
 PREFERRED_PARQUET = ["sales_10000.parquet", "요약본.parquet", "data.parquet"]
 
 
-def _find_sales_file() -> Optional[str]:
+def _find_sales_file(base_dir: Path) -> Optional[Path]:
     for name in PREFERRED_PARQUET:
-        if os.path.exists(name):
-            return name
+        p = base_dir / name
+        if p.exists():
+            return p
     return None
 
 
@@ -224,24 +231,24 @@ def _fetch_api_for_groups(df_groups_sel: pd.DataFrame, tokens: list[str], df_ite
 st.set_page_config(page_title="아이템 검색 웹", layout="wide")
 st.title("아이템 검색/가공 (웹)")
 
-excel_file = "item.xlsx"
-sales_file = _find_sales_file()
+excel_file = BASE_DIR / "item.xlsx"
+sales_file = _find_sales_file(BASE_DIR)
 
 with st.sidebar:
     st.header("파일 상태")
-    st.write(f"item.xlsx: {'OK' if os.path.exists(excel_file) else 'MISSING'}")
-    st.write(f"parquet: {sales_file if sales_file else 'MISSING'}")
+    st.write(f"item.xlsx: {'OK' if excel_file.exists() else 'MISSING'}")
+    st.write(f"parquet: {str(sales_file) if sales_file else 'MISSING'}")
 
-if not os.path.exists(excel_file):
+if not excel_file.exists():
     st.error("item.xlsx 파일이 없습니다. 먼저 업로드/배치해주세요.")
     st.stop()
 if not sales_file:
     st.error("parquet 파일을 찾을 수 없습니다. (sales_10000.parquet / 요약본.parquet / data.parquet)")
     st.stop()
 
-mode = _init_sales_backend(sales_file)
+mode = _init_sales_backend(str(sales_file))
 
-df_items = _load_items(excel_file)
+df_items = _load_items(str(excel_file))
 
 query = st.text_input("아이템 검색어", key="query")
 col1, col2, col3 = st.columns(3)
@@ -306,7 +313,7 @@ if groups is not None:
                     selected_items = _selected_items_from_group(df_filtered, row)
                     if not selected_items:
                         continue
-                    result = process_items(tokens, row.get("sheet", ""), selected_items, excel_file, sales_file)
+                    result = process_items(tokens, row.get("sheet", ""), selected_items, str(excel_file), str(sales_file))
                     proc_rows.extend(result.get(4, []) or [])
 
             if include_api:
