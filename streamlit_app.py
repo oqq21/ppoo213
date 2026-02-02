@@ -639,6 +639,20 @@ if not sales_file:
 mode = _init_sales_backend(str(sales_file))
 df_items = _load_items(str(excel_file))
 
+
+def _on_query_change() -> None:
+    _trigger_search()
+    try:
+        text, title = _base_stats_from_query(df_items, st.session_state.get("query", ""))
+    except Exception:
+        return
+    if text:
+        st.session_state["base_stat_text"] = text
+        st.session_state["base_stat_title"] = title
+    else:
+        st.session_state["base_stat_text"] = ""
+        st.session_state["base_stat_title"] = ""
+
 mtime_text = _format_mtime(sales_file)
 st.caption(f"parquet 최종수정: {mtime_text} · backend: {mode}")
 
@@ -667,7 +681,7 @@ with col_left:
 
     col_q, col_s1, col_s2, col_s3 = st.columns([3, 1, 1, 1])
     with col_q:
-        query = st.text_input("검색어", key="query", on_change=_trigger_search)
+        query = st.text_input("검색어", key="query", on_change=_on_query_change)
     with col_s1:
         stat1 = st.text_input("스탯1", key="stat1", on_change=_trigger_search)
     with col_s2:
@@ -815,6 +829,8 @@ api_sell = st.session_state.get("api_sell", pd.DataFrame())
 api_buy = st.session_state.get("api_buy", pd.DataFrame())
 
 if include_api:
+    if "api_sort" not in st.session_state:
+        st.session_state["api_sort"] = "가격순"
     top = st.columns([1.2, 1, 6])
     with top[0]:
         api_kind = st.radio(
