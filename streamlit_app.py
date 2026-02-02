@@ -299,7 +299,7 @@ def _paginate_list(rows: list[dict], page: int, page_size: int) -> tuple[list[di
     return rows[start:end], page, pages, total
 
 
-def _push_history(query: str, tokens: list[str]) -> None:
+def _save_history_snapshot(query: str, tokens: list[str], api_sell: pd.DataFrame, api_buy: pd.DataFrame, proc_rows: list[dict]) -> None:
     q = (query or "").strip()
     stat_str = " ".join(tokens)
     if not q and not stat_str:
@@ -309,11 +309,14 @@ def _push_history(query: str, tokens: list[str]) -> None:
         "검색어": q,
         "스탯": stat_str,
         "tokens": list(tokens),
+        "api_sell": api_sell.copy() if isinstance(api_sell, pd.DataFrame) else pd.DataFrame(),
+        "api_buy": api_buy.copy() if isinstance(api_buy, pd.DataFrame) else pd.DataFrame(),
+        "proc_rows": list(proc_rows) if isinstance(proc_rows, list) else [],
     }
     def _same(a, b):
         return a.get("검색어") == b.get("검색어") and a.get("스탯") == b.get("스탯")
     hist = [item] + [h for h in hist if not _same(h, item)]
-    st.session_state["history"] = hist[:20]
+    st.session_state["history"] = hist[:10]
 
 
 def _on_history_change() -> None:
@@ -347,14 +350,20 @@ def _apply_history_idx(idx) -> None:
 
 def _queue_apply_history(h: dict) -> None:
     tokens = h.get("tokens", [])
-    st.session_state["pending_apply"] = {
+    pending = {
         "query": h.get("검색어", ""),
         "stat1": tokens[0] if len(tokens) > 0 else "",
         "stat2": tokens[1] if len(tokens) > 1 else "",
         "stat3": tokens[2] if len(tokens) > 2 else "",
     }
+    if "api_sell" in h or "proc_rows" in h:
+        pending["api_sell"] = h.get("api_sell", pd.DataFrame())
+        pending["api_buy"] = h.get("api_buy", pd.DataFrame())
+        pending["proc_rows"] = h.get("proc_rows", [])
+        pending["use_cached"] = True
+    st.session_state["pending_apply"] = pending
     st.session_state["auto_search"] = True
-    st.session_state["run_now"] = True
+    st.session_state["run_now"] = False
 
 
 def _ensure_sales_loaded(sales_path: str) -> None:
@@ -560,6 +569,8 @@ st.markdown(
       .stMarkdown p { margin-bottom: 0.1rem; }
       div[data-testid="stMarkdownContainer"] h2 { margin-bottom: 0.1rem; }
       div[data-testid="stToolbar"] { visibility: hidden; height: 0px; }
+      .stButton button { padding: 2px 6px; font-size: 10px; }
+      .stRadio label { font-size: 10px; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -584,7 +595,14 @@ st.caption(f"parquet 최종수정: {mtime_text} · backend: {mode}")
 pending = st.session_state.pop("pending_apply", None)
 if isinstance(pending, dict) and pending:
     for k, v in pending.items():
+        if k in ("api_sell", "api_buy", "proc_rows"):
+            continue
         st.session_state[k] = v
+    if pending.get("use_cached"):
+        st.session_state["api_sell"] = pending.get("api_sell", pd.DataFrame())
+        st.session_state["api_buy"] = pending.get("api_buy", pd.DataFrame())
+        st.session_state["proc_rows"] = pending.get("proc_rows", [])
+        st.session_state["run_now"] = False
     st.session_state["auto_search"] = True
 
 if st.session_state.get("auto_search"):
@@ -619,7 +637,6 @@ with col_left:
             st.session_state.get("stat2", ""),
             st.session_state.get("stat3", ""),
         )
-        _push_history(st.session_state.get("query", ""), tokens)
         st.session_state["run_now"] = True
 
     if btn_open:
@@ -627,9 +644,7 @@ with col_left:
         if groups is None or groups.empty:
             groups = _run_search(df_items, st.session_state.get("query", ""))
         if groups is not None and not groups.empty:
-            sel_idx = st.session_state.get("group_idx", 0)
-            sel_idx = min(max(0, int(sel_idx)), len(groups) - 1)
-            row = groups.iloc[sel_idx]
+            row = groups.iloc[0]
             tokens = _read_tokens(
                 st.session_state.get("stat1", ""),
                 st.session_state.get("stat2", ""),
@@ -660,31 +675,31 @@ with col_left:
     base_text = st.session_state.get("base_stat_text", "")
     base_title = st.session_state.get("base_stat_title", "")
 
-    st.caption("대표아이템 스탯 / 기록")
+    st.markdown("<div style='font-weight:700;color:#111;font-size:12px;'>대표아이템 스탯 / 기록</div>", unsafe_allow_html=True)
     col_bs, col_hist = st.columns([1.2, 1])
     with col_bs:
         if base_text:
             one_line = base_text.replace("\n", " / ")
-            st.caption(f"{base_title}: {one_line}")
+            st.markdown(f"<div style='color:#111;font-weight:600;font-size:11px;'>{base_title}: {one_line}</div>", unsafe_allow_html=True)
         else:
-            st.caption("대표아이템 스탯 없음")
+            st.markdown("<div style='color:#111;font-weight:600;font-size:11px;'>대표아이템 스탯 없음</div>", unsafe_allow_html=True)
     with col_hist:
         if history:
-            st.caption("최근 10개")
+            st.markdown("<div style='color:#111;font-weight:600;font-size:11px;'>최근 9개</div>", unsafe_allow_html=True)
         else:
-            st.caption("검색 기록 없음")
+            st.markdown("<div style='color:#111;font-weight:600;font-size:11px;'>검색 기록 없음</div>", unsafe_allow_html=True)
 
     if history:
-        hist = history[:10]
-        col_a, col_b = st.columns(2)
-        for i, h in enumerate(hist):
-            label = f"{h.get('검색어','')} | {h.get('스탯','')}"
-            if i < 5:
-                if col_a.button(label, key=f"hist_btn_{i}", use_container_width=True):
-                    _apply_history_idx(i)
-                    st.rerun()
-            else:
-                if col_b.button(label, key=f"hist_btn_{i}", use_container_width=True):
+        hist = history[:9]
+        for r in range(3):
+            cols = st.columns(3, gap="small")
+            for c in range(3):
+                i = r * 3 + c
+                if i >= len(hist):
+                    continue
+                h = hist[i]
+                label = f"{h.get('검색어','')} | {h.get('스탯','')}"
+                if cols[c].button(label, key=f"hist_btn_{i}", use_container_width=True):
                     _apply_history_idx(i)
                     st.rerun()
 
@@ -763,6 +778,7 @@ if groups is not None and not groups.empty:
         st.session_state["proc_page"] = 1
         st.session_state["page_sell"] = 1
         st.session_state["page_buy"] = 1
+        _save_history_snapshot(st.session_state.get("query", ""), tokens, api_sell, api_buy, proc_rows)
         st.session_state["run_now"] = False
         st.rerun()
 
@@ -792,7 +808,7 @@ if include_api:
     view = _api_view_df(src, "price" if api_sort == "가격순" else "time")
     page_key = "page_sell" if api_kind == "판매" else "page_buy"
     page = st.session_state.get(page_key, 1)
-    page_view, page, pages, total = _paginate_df(view, page, 7)
+    page_view, page, pages, total = _paginate_df(view, page, 12)
     st.session_state[page_key] = page
 
     nav = st.columns([1, 2, 6])
@@ -810,7 +826,7 @@ if include_api:
         page_view,
         use_container_width=True,
         hide_index=True,
-        height=180,
+        height=260,
         column_config={"프로필": st.column_config.LinkColumn("프로필")},
     )
 
