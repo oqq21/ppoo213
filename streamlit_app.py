@@ -132,6 +132,16 @@ def _format_price_man(v) -> str:
             return ""
 
 
+def _emph_price(v) -> str:
+    s = _format_price_man(v)
+    return f"💰 {s}" if s else ""
+
+
+def _emph_option(v) -> str:
+    s = str(v or "").strip()
+    return f"◆ {s}" if s else ""
+
+
 def _offer_label(v) -> str:
     try:
         iv = int(v)
@@ -186,8 +196,8 @@ def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
         "색": d.get("color", "").map(_color_dot) if "color" in d.columns else "",
         "상태": d.get("tradeStatus", "").map(lambda x: "🟢 판매중" if bool(x) else "⚫ 판매완료") if "tradeStatus" in d.columns else "",
         "아이템": d.get("itemName", ""),
-        "가격(만)": d.get("itemPrice", "").map(_format_price_man) if "itemPrice" in d.columns else "",
-        "옵션": d.get(opt_col, ""),
+        "가격(만)": d.get("itemPrice", "").map(_emph_price) if "itemPrice" in d.columns else "",
+        "옵션": d.get(opt_col, "").map(_emph_option) if opt_col in d.columns else "",
         "판매자": d.get("global_name", ""),
         "흥정": d.get("offer_raw", "").map(_offer_label) if "offer_raw" in d.columns else "",
         "경신": d.get("updated_at", "").map(_relative_time) if "updated_at" in d.columns else "",
@@ -206,7 +216,7 @@ def _proc_view_df(rows: list[dict]) -> pd.DataFrame:
         "일전": df.get("days_ago", ""),
         "아이템": df.get("item", ""),
         "판매자": df.get("seller", ""),
-        "가격(만)": df.get("price", ""),
+        "가격(만)": df.get("price", "").map(_emph_price) if "price" in df.columns else "",
         "스탯": df.get("stats", ""),
         "비고": df.get("comment", ""),
         "링크": df.get("url", ""),
@@ -588,7 +598,7 @@ st.markdown(
         white-space: nowrap;
       }
       .link-btn.disabled { color: #888; background: #f2f2f2; border-color: #ddd; }
-      .base-stat { font-size: 12px; font-weight: 700; color: #000; }
+      .base-stat { font-size: 13px; font-weight: 700; color: #000; line-height: 1.3; }
       .base-stat-empty { font-size: 11px; font-weight: 700; color: #000; }
     </style>
     """,
@@ -671,7 +681,7 @@ with col_left:
             btn_col3.markdown("<span class='link-btn disabled'>검색 페이지 열기</span>", unsafe_allow_html=True)
         if base_text:
             one_line = base_text.replace("\n", " / ")
-            btn_stat_col.markdown(f"<div class='base-stat'>{base_title}: {one_line}</div>", unsafe_allow_html=True)
+            btn_stat_col.markdown(f"<div class='base-stat'>{one_line}</div>", unsafe_allow_html=True)
         else:
             btn_stat_col.markdown("<div class='base-stat-empty'>대표아이템 스탯 없음</div>", unsafe_allow_html=True)
 
@@ -718,7 +728,7 @@ with col_left:
 with col_right:
     st.caption("가공 결과")
     proc_rows = st.session_state.get("proc_rows", [])
-    page_size_proc = 22
+    page_size_proc = 26
     proc_page = st.session_state.get("proc_page", 1)
     page_rows, proc_page, proc_pages, proc_total = _paginate_list(proc_rows, proc_page, page_size_proc)
     st.session_state["proc_page"] = proc_page
@@ -740,7 +750,7 @@ with col_right:
             view,
             use_container_width=True,
             hide_index=True,
-            height=340,
+            height=380,
             column_config={"링크": st.column_config.LinkColumn("링크")},
         )
     else:
