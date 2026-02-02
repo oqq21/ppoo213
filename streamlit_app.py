@@ -318,6 +318,20 @@ def _on_history_change() -> None:
         st.session_state["stat2"] = tokens[1] if len(tokens) > 1 else ""
         st.session_state["stat3"] = tokens[2] if len(tokens) > 2 else ""
         st.session_state["auto_search"] = True
+        st.session_state["run_now"] = True
+
+
+def _on_group_change() -> None:
+    st.session_state["run_now"] = True
+
+
+def _ensure_sales_loaded(sales_path: str) -> None:
+    if sales_store.is_duckdb():
+        return
+    try:
+        sales_store.get_sales()
+    except Exception:
+        sales_store.preload_sales(sales_path, columns=sales_store.MIN_COLUMNS_FOR_PROCESSOR)
 
 
 def _base_stats_from_query(df_items: pd.DataFrame, query: str) -> tuple[str, str]:
@@ -508,9 +522,10 @@ st.set_page_config(page_title="아이템 검색 웹", layout="wide")
 st.markdown(
     """
     <style>
-      .block-container { max-width: 100%; padding-top: 0.6rem; padding-bottom: 0.8rem; }
-      div[data-testid="stDataFrame"] { font-size: 12px; }
-      div[data-testid="stMarkdownContainer"] h2 { margin-bottom: 0.2rem; }
+      .block-container { max-width: 100%; padding-top: 0.2rem; padding-bottom: 0.4rem; }
+      div[data-testid="stDataFrame"] { font-size: 10px; }
+      .stMarkdown p { margin-bottom: 0.1rem; }
+      div[data-testid="stMarkdownContainer"] h2 { margin-bottom: 0.1rem; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -542,7 +557,7 @@ col_left, col_right = st.columns([1.2, 2.1], gap="large")
 
 with col_left:
     with st.form("search_form", clear_on_submit=False):
-        st.subheader("1  (검색어 / 스탯 입력)")
+        st.markdown("**1 (검색어 / 스탯 입력)**")
         col_q, col_s1, col_s2, col_s3 = st.columns([3, 1, 1, 1])
         with col_q:
             query = st.text_input("검색어", key="query")
@@ -558,7 +573,7 @@ with col_left:
         btn_open = btn_col2.form_submit_button("검색 페이지 열기")
         btn_base = btn_col3.form_submit_button("대표아이템 스탯")
 
-    include_api = st.checkbox("API 조회 포함", value=True)
+    include_api = True
 
     if btn_search:
         groups = _run_search(df_items, st.session_state.get("query", ""))
@@ -568,13 +583,15 @@ with col_left:
             st.session_state.get("stat3", ""),
         )
         _push_history(st.session_state.get("query", ""), tokens)
+        st.session_state["group_idx"] = 0
+        st.session_state["run_now"] = True
 
     if btn_open:
         groups = st.session_state.get("groups")
         if groups is None or groups.empty:
             groups = _run_search(df_items, st.session_state.get("query", ""))
         if groups is not None and not groups.empty:
-            sel_idx = st.session_state.get("selected_group_idx", 0)
+            sel_idx = st.session_state.get("group_idx", 0)
             sel_idx = min(max(0, int(sel_idx)), len(groups) - 1)
             row = groups.iloc[sel_idx]
             tokens = _read_tokens(
@@ -605,23 +622,27 @@ with col_left:
     history = st.session_state.get("history", [])
 
     if groups is not None:
-        st.subheader("2-1  (그룹 요약)")
-        st.dataframe(groups, use_container_width=True, hide_index=True, height=220)
+        base_text = st.session_state.get("base_stat_text", "")
+        base_title = st.session_state.get("base_stat_title", "")
+        if base_text:
+            st.markdown("**대표아이템 스탯**")
+            st.caption(base_title)
+            st.text(base_text)
+
+        st.markdown("**2-1**")
+        st.dataframe(groups, use_container_width=True, hide_index=True, height=170)
 
         if not groups.empty:
             labels = [(_format_group_label(row)) for _, row in groups.iterrows()]
             sel_idx = st.selectbox(
-                "그룹 선택",
+                "그룹",
                 options=list(range(len(labels))),
-                index=min(st.session_state.get("selected_group_idx", 0), len(labels) - 1),
+                index=min(st.session_state.get("group_idx", 0), len(labels) - 1),
                 format_func=lambda i: labels[i],
+                key="group_idx",
+                on_change=_on_group_change,
             )
-            st.session_state["selected_group_idx"] = sel_idx
-            run_one = st.button("조회 실행", key="run_one")
-        else:
-            run_one = False
-
-        st.subheader("2-2  (검색 기록)")
+        st.markdown("**2-2**")
         if history:
             hist_labels = [f"{h.get('검색어','')}  |  {h.get('스탯','')}" for h in history]
             hist_idx = st.selectbox(
@@ -631,23 +652,16 @@ with col_left:
                 key="hist_idx",
                 on_change=_on_history_change,
             )
-            st.dataframe(pd.DataFrame(history)[["검색어", "스탯", "시간"]], use_container_width=True, hide_index=True, height=160)
+            st.dataframe(pd.DataFrame(history)[["검색어", "스탯", "시간"]], use_container_width=True, hide_index=True, height=140)
         else:
             hist_idx = None
             st.caption("검색 기록이 없습니다.")
-
-        base_text = st.session_state.get("base_stat_text", "")
-        base_title = st.session_state.get("base_stat_title", "")
-        if base_text:
-            st.subheader("대표아이템 스탯")
-            st.caption(base_title)
-            st.text(base_text)
 
     if st.session_state.get("open_url"):
         st.link_button("검색 페이지 열기", st.session_state["open_url"])
 
 with col_right:
-    st.subheader("4  (가공 결과 — 통합)")
+    st.markdown("**4 (가공 결과 — 통합)**")
     proc_rows = st.session_state.get("proc_rows", [])
     page_size_proc = 18
     proc_page = st.session_state.get("proc_page", 1)
@@ -671,7 +685,7 @@ with col_right:
             view,
             use_container_width=True,
             hide_index=True,
-            height=420,
+            height=300,
             column_config={"링크": st.column_config.LinkColumn("링크")},
         )
     else:
@@ -685,10 +699,12 @@ if groups is not None and not groups.empty:
         st.session_state.get("stat3", ""),
     )
     df_filtered = st.session_state.get("df_filtered", df_items)
-    run_one = st.session_state.get("run_one", False)
+    run_now = st.session_state.get("run_now", False)
 
-    if run_one:
-        row = groups.iloc[int(st.session_state.get("selected_group_idx", 0))]
+    if run_now:
+        idx = int(st.session_state.get("group_idx", 0))
+        idx = min(max(0, idx), len(groups) - 1)
+        row = groups.iloc[idx]
         target_groups = pd.DataFrame([row])[["대표아이템명", "sheet", "gender", "reqLevel"]]
 
         with st.spinner("계산 중..."):
@@ -703,6 +719,7 @@ if groups is not None and not groups.empty:
                     api_sell = df_api[sell_mask].reset_index(drop=True)
                     api_buy = df_api[buy_mask].reset_index(drop=True)
 
+            _ensure_sales_loaded(str(sales_file))
             proc_rows = []
             for _, row in target_groups.iterrows():
                 selected_items = _selected_items_from_group(df_filtered, row)
@@ -717,13 +734,13 @@ if groups is not None and not groups.empty:
         st.session_state["proc_page"] = 1
         st.session_state["page_sell"] = 1
         st.session_state["page_buy"] = 1
-        st.session_state["run_one"] = False
+        st.session_state["run_now"] = False
 
 api_sell = st.session_state.get("api_sell", pd.DataFrame())
 api_buy = st.session_state.get("api_buy", pd.DataFrame())
 
 if include_api:
-    st.subheader("3  (API 결과)")
+    st.markdown("**3 (API 결과)**")
     tab_sell, tab_buy = st.tabs(["판매", "구매"])
 
     with tab_sell:
@@ -746,7 +763,7 @@ if include_api:
             page_view,
             use_container_width=True,
             hide_index=True,
-            height=260,
+            height=220,
             column_config={
                 "거래링크": st.column_config.LinkColumn("거래"),
                 "프로필": st.column_config.LinkColumn("프로필"),
@@ -773,7 +790,7 @@ if include_api:
             page_view,
             use_container_width=True,
             hide_index=True,
-            height=260,
+            height=220,
             column_config={
                 "거래링크": st.column_config.LinkColumn("거래"),
                 "프로필": st.column_config.LinkColumn("프로필"),
