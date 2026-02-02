@@ -177,7 +177,13 @@ def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
     d = d.drop(columns=["_sort"], errors="ignore")
 
     opt_col = "optionSummarize" if "optionSummarize" in d.columns else "option"
+    def _color_dot(v):
+        m = {"purple": "🟣", "yellow": "🟡", "blue": "🔵", "gray": "⚪", "white": "⚪"}
+        return m.get(str(v or "").lower(), "⚪")
+
     out = pd.DataFrame({
+        "색": d.get("color", "").map(_color_dot) if "color" in d.columns else "",
+        "상태": d.get("tradeStatus", "").map(lambda x: "🟢 판매중" if bool(x) else "⚫ 판매완료") if "tradeStatus" in d.columns else "",
         "아이템": d.get("itemName", ""),
         "가격(만)": d.get("itemPrice", "").map(_format_price_man) if "itemPrice" in d.columns else "",
         "옵션": d.get(opt_col, ""),
@@ -185,9 +191,7 @@ def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
         "흥정": d.get("offer_raw", "").map(_offer_label) if "offer_raw" in d.columns else "",
         "경신": d.get("updated_at", "").map(_relative_time) if "updated_at" in d.columns else "",
         "등록": d.get("created_at", "").map(_relative_time) if "created_at" in d.columns else "",
-        "상태": d.get("tradeStatus", "").map(_status_label) if "tradeStatus" in d.columns else "",
         "서버": d.get("server", ""),
-        "거래링크": d.get("tradeUrl", ""),
         "프로필": d.get("profileUrl", ""),
     })
     return out
@@ -324,13 +328,7 @@ def _on_history_change() -> None:
             st.session_state["hist_idx"] = 0
             return
         h = history[idx]
-        tokens = h.get("tokens", [])
-        st.session_state["query"] = h.get("검색어", "")
-        st.session_state["stat1"] = tokens[0] if len(tokens) > 0 else ""
-        st.session_state["stat2"] = tokens[1] if len(tokens) > 1 else ""
-        st.session_state["stat3"] = tokens[2] if len(tokens) > 2 else ""
-        st.session_state["auto_search"] = True
-        st.session_state["run_now"] = True
+        _queue_apply_history(h)
 
 
 def _apply_history_idx(idx) -> None:
@@ -344,11 +342,17 @@ def _apply_history_idx(idx) -> None:
     if idx < 0 or idx >= len(history):
         return
     h = history[idx]
+    _queue_apply_history(h)
+
+
+def _queue_apply_history(h: dict) -> None:
     tokens = h.get("tokens", [])
-    st.session_state["query"] = h.get("검색어", "")
-    st.session_state["stat1"] = tokens[0] if len(tokens) > 0 else ""
-    st.session_state["stat2"] = tokens[1] if len(tokens) > 1 else ""
-    st.session_state["stat3"] = tokens[2] if len(tokens) > 2 else ""
+    st.session_state["pending_apply"] = {
+        "query": h.get("검색어", ""),
+        "stat1": tokens[0] if len(tokens) > 0 else "",
+        "stat2": tokens[1] if len(tokens) > 1 else "",
+        "stat3": tokens[2] if len(tokens) > 2 else "",
+    }
     st.session_state["auto_search"] = True
     st.session_state["run_now"] = True
 
@@ -552,7 +556,7 @@ st.markdown(
     <style>
       body, .stApp { background-color: #f2f2f2; color: #111; }
       .block-container { max-width: 100%; padding-top: 0.2rem; padding-bottom: 0.4rem; }
-      div[data-testid="stDataFrame"] { font-size: 9px; }
+      div[data-testid="stDataFrame"] { font-size: 10px; }
       .stMarkdown p { margin-bottom: 0.1rem; }
       div[data-testid="stMarkdownContainer"] h2 { margin-bottom: 0.1rem; }
       div[data-testid="stToolbar"] { visibility: hidden; height: 0px; }
@@ -560,8 +564,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-st.title("아이템 검색/가공 (웹)")
 
 excel_file = BASE_DIR / "item.xlsx"
 sales_file = _find_sales_file(BASE_DIR)
@@ -578,6 +580,12 @@ df_items = _load_items(str(excel_file))
 
 mtime_text = _format_mtime(sales_file)
 st.caption(f"parquet 최종수정: {mtime_text} · backend: {mode}")
+
+pending = st.session_state.pop("pending_apply", None)
+if isinstance(pending, dict) and pending:
+    for k, v in pending.items():
+        st.session_state[k] = v
+    st.session_state["auto_search"] = True
 
 if st.session_state.get("auto_search"):
     _run_search(df_items, st.session_state.get("query", ""))
@@ -662,23 +670,23 @@ with col_left:
             st.caption("대표아이템 스탯 없음")
     with col_hist:
         if history:
-            hist_labels = [f"{h.get('검색어','')}  |  {h.get('스탯','')}" for h in history]
-            hc1, hc2 = st.columns([4, 1])
-            with hc1:
-                hist_idx = st.selectbox(
-                    "기록 선택",
-                    options=list(range(len(hist_labels))),
-                    format_func=lambda i: hist_labels[i],
-                    key="hist_idx",
-                    label_visibility="collapsed",
-                )
-            with hc2:
-                if st.button("적용", key="apply_hist"):
-                    _apply_history_idx(hist_idx)
-                    st.rerun()
+            st.caption("최근 10개")
         else:
             st.caption("검색 기록 없음")
-            hist_idx = None
+
+    if history:
+        hist = history[:10]
+        col_a, col_b = st.columns(2)
+        for i, h in enumerate(hist):
+            label = f"{h.get('검색어','')} | {h.get('스탯','')}"
+            if i < 5:
+                if col_a.button(label, key=f"hist_btn_{i}", use_container_width=True):
+                    _apply_history_idx(i)
+                    st.rerun()
+            else:
+                if col_b.button(label, key=f"hist_btn_{i}", use_container_width=True):
+                    _apply_history_idx(i)
+                    st.rerun()
 
     if st.session_state.get("open_url"):
         st.link_button("검색 페이지 열기", st.session_state["open_url"])
@@ -691,9 +699,9 @@ with col_right:
     page_rows, proc_page, proc_pages, proc_total = _paginate_list(proc_rows, proc_page, page_size_proc)
     st.session_state["proc_page"] = proc_page
 
-    nav = st.columns([1, 2, 1])
+    nav = st.columns([1, 2, 6])
     prev_p = nav[0].button("◀", key="proc_prev")
-    nav[1].markdown(f"<div style='text-align:center'> {proc_page}/{proc_pages} · 총 {proc_total} </div>", unsafe_allow_html=True)
+    nav[1].caption(f"{proc_page}/{proc_pages} · 총 {proc_total}")
     next_p = nav[2].button("▶", key="proc_next")
     if prev_p and proc_page > 1:
         st.session_state["proc_page"] = proc_page - 1
@@ -772,9 +780,10 @@ if include_api:
             label_visibility="collapsed",
         )
     with top[1]:
-        api_sort = st.selectbox(
+        api_sort = st.radio(
             "정렬",
             ["최신순", "가격순"],
+            horizontal=True,
             key="api_sort",
             label_visibility="collapsed",
         )
@@ -786,13 +795,13 @@ if include_api:
     page_view, page, pages, total = _paginate_df(view, page, 7)
     st.session_state[page_key] = page
 
-    nav = st.columns([1, 2, 1])
+    nav = st.columns([1, 2, 6])
     prev_key = "sell_prev" if api_kind == "판매" else "buy_prev"
     next_key = "sell_next" if api_kind == "판매" else "buy_next"
     if nav[0].button("◀", key=prev_key) and page > 1:
         st.session_state[page_key] = page - 1
         st.rerun()
-    nav[1].markdown(f"<div style='text-align:center'> {page}/{pages} · 총 {total} </div>", unsafe_allow_html=True)
+    nav[1].caption(f"{page}/{pages} · 총 {total}")
     if nav[2].button("▶", key=next_key) and pages and page < pages:
         st.session_state[page_key] = page + 1
         st.rerun()
@@ -802,10 +811,7 @@ if include_api:
         use_container_width=True,
         hide_index=True,
         height=180,
-        column_config={
-            "거래링크": st.column_config.LinkColumn("거래"),
-            "프로필": st.column_config.LinkColumn("프로필"),
-        },
+        column_config={"프로필": st.column_config.LinkColumn("프로필")},
     )
 
 if groups is None:
