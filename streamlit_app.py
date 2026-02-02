@@ -229,7 +229,7 @@ def _proc_view_df(rows: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     out = pd.DataFrame({
         "일전": df.get("days_ago", ""),
-        "상태": df.get("highlight", "").map(lambda x: "판매중" if bool(x) else "판매완료") if "highlight" in df.columns else "",
+        "상태": df.get("highlight", "").map(lambda x: "🟢 판매중" if bool(x) else "⚫ 판매완료") if "highlight" in df.columns else "",
         "아이템": df.get("item", ""),
         "가격(만)": df.get("price", "").map(_emph_price) if "price" in df.columns else "",
         "판매자": df.get("seller", ""),
@@ -606,14 +606,14 @@ st.markdown(
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 5px 14px;
-        min-height: 32px;
+        padding: 6px 16px;
+        min-height: 36px;
         background: #e6e6e6;
         border: 1px solid #cfcfcf;
         border-radius: 6px;
         color: #111;
         text-decoration: none;
-        font-size: 11px;
+        font-size: 12px;
         white-space: nowrap;
         line-height: 1.1;
       }
@@ -837,7 +837,7 @@ if include_api:
     view = _api_view_df(src, "price" if api_sort == "가격순" else "time")
     page_key = "page_sell" if api_kind == "판매" else "page_buy"
     page = st.session_state.get(page_key, 1)
-    page_view, page, pages, total = _paginate_df(view, page, 8)
+    page_view, page, pages, total = _paginate_df(view, page, 7)
     st.session_state[page_key] = page
 
     nav = st.columns([0.6, 0.6, 2, 8])
@@ -856,7 +856,13 @@ if include_api:
         use_container_width=True,
         hide_index=True,
         height=300,
-        column_config={"프로필": st.column_config.LinkColumn("프로필", display_text="열기")},
+        column_config={
+            "색": st.column_config.Column("색", width="small"),
+            "상태": st.column_config.Column("상태", width="small"),
+            "스탯": st.column_config.Column("스탯", width="large"),
+            "코멘트": st.column_config.Column("코멘트", width="medium"),
+            "프로필": st.column_config.LinkColumn("프로필", display_text="열기", width="small"),
+        },
     )
 
 if groups is None:
