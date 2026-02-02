@@ -198,6 +198,7 @@ def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
         "아이템": d.get("itemName", ""),
         "가격(만)": d.get("itemPrice", "").map(_emph_price) if "itemPrice" in d.columns else "",
         "옵션": d.get(opt_col, "").map(_emph_option) if opt_col in d.columns else "",
+        "코멘트": d.get("comment", "") if "comment" in d.columns else d.get("comment", ""),
         "판매자": d.get("global_name", ""),
         "흥정": d.get("offer_raw", "").map(_offer_label) if "offer_raw" in d.columns else "",
         "경신": d.get("updated_at", "").map(_relative_time) if "updated_at" in d.columns else "",
@@ -374,6 +375,11 @@ def _queue_apply_history(h: dict) -> None:
     st.session_state["pending_apply"] = pending
     st.session_state["auto_search"] = True
     st.session_state["run_now"] = False
+
+
+def _trigger_search() -> None:
+    st.session_state["auto_search"] = True
+    st.session_state["run_now"] = True
 
 
 def _ensure_sales_loaded(sales_path: str) -> None:
@@ -580,25 +586,24 @@ st.markdown(
       div[data-testid="stMarkdownContainer"] h2 { margin-bottom: 0.1rem; }
       div[data-testid="stToolbar"] { visibility: hidden; height: 0px; }
       .stButton button { padding: 2px 4px; font-size: 6px; white-space: nowrap; }
-      div[data-testid="stForm"] .stButton button { padding: 3px 8px; font-size: 8px; }
-      button[kind="primary"] { padding: 3px 10px; font-size: 9px; }
+      button[kind="primary"] { padding: 4px 12px; font-size: 10px; }
       .stRadio label { font-size: 9px; }
       .link-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 3px 10px;
-        min-height: 24px;
+        padding: 4px 12px;
+        min-height: 28px;
         background: #e6e6e6;
         border: 1px solid #cfcfcf;
         border-radius: 6px;
         color: #111;
         text-decoration: none;
-        font-size: 8px;
+        font-size: 10px;
         white-space: nowrap;
       }
       .link-btn.disabled { color: #888; background: #f2f2f2; border-color: #ddd; }
-      .base-stat { font-size: 13px; font-weight: 700; color: #000; line-height: 1.3; }
+      .base-stat { font-size: 15px; font-weight: 700; color: #000; line-height: 1.3; }
       .base-stat-empty { font-size: 11px; font-weight: 700; color: #000; }
     </style>
     """,
@@ -644,57 +649,46 @@ with col_left:
     base_text = st.session_state.get("base_stat_text", "")
     base_title = st.session_state.get("base_stat_title", "")
 
-    with st.form("search_form", clear_on_submit=False):
-        col_q, col_s1, col_s2, col_s3 = st.columns([3, 1, 1, 1])
-        with col_q:
-            query = st.text_input("검색어", key="query")
-        with col_s1:
-            stat1 = st.text_input("스탯1", key="stat1")
-        with col_s2:
-            stat2 = st.text_input("스탯2", key="stat2")
-        with col_s3:
-            stat3 = st.text_input("스탯3", key="stat3")
+    col_q, col_s1, col_s2, col_s3 = st.columns([3, 1, 1, 1])
+    with col_q:
+        query = st.text_input("검색어", key="query", on_change=_trigger_search)
+    with col_s1:
+        stat1 = st.text_input("스탯1", key="stat1", on_change=_trigger_search)
+    with col_s2:
+        stat2 = st.text_input("스탯2", key="stat2", on_change=_trigger_search)
+    with col_s3:
+        stat3 = st.text_input("스탯3", key="stat3", on_change=_trigger_search)
 
-        tokens_for_link = _read_tokens(stat1, stat2, stat3)
-        groups_for_link = st.session_state.get("groups")
-        open_url = ""
-        if groups_for_link is not None and not groups_for_link.empty:
-            row = groups_for_link.iloc[0]
-            open_url = _build_site_search_url(
-                str(row.get("sheet", "")),
-                str(row.get("gender", "")),
-                int(float(row.get("reqLevel", 0) or 0)),
-                str(row.get("대표아이템명", "")),
-                tokens_for_link,
-            )
+    tokens_for_link = _read_tokens(stat1, stat2, stat3)
+    groups_for_link = st.session_state.get("groups")
+    open_url = ""
+    if groups_for_link is not None and not groups_for_link.empty:
+        row = groups_for_link.iloc[0]
+        open_url = _build_site_search_url(
+            str(row.get("sheet", "")),
+            str(row.get("gender", "")),
+            int(float(row.get("reqLevel", 0) or 0)),
+            str(row.get("대표아이템명", "")),
+            tokens_for_link,
+        )
 
-        btn_col1, btn_col2, btn_col3, btn_stat_col = st.columns([1.2, 1.4, 1.6, 3], gap="small")
-        btn_search = btn_col1.form_submit_button("검색", type="primary")
-        btn_base = btn_col2.form_submit_button("대표아이템 스탯")
-        if open_url:
-            safe_url = html.escape(open_url, quote=True)
-            btn_col3.markdown(
-                f"<a class='link-btn' href='{safe_url}' target='_blank'>검색 페이지 열기</a>",
-                unsafe_allow_html=True,
-            )
-        else:
-            btn_col3.markdown("<span class='link-btn disabled'>검색 페이지 열기</span>", unsafe_allow_html=True)
-        if base_text:
-            one_line = base_text.replace("\n", " / ")
-            btn_stat_col.markdown(f"<div class='base-stat'>{one_line}</div>", unsafe_allow_html=True)
-        else:
-            btn_stat_col.markdown("<div class='base-stat-empty'>대표아이템 스탯 없음</div>", unsafe_allow_html=True)
+    btn_col2, btn_col3, btn_stat_col = st.columns([1.5, 1.8, 3.5], gap="small")
+    btn_base = btn_col2.button("대표아이템 스탯", type="primary", use_container_width=True)
+    if open_url:
+        safe_url = html.escape(open_url, quote=True)
+        btn_col3.markdown(
+            f"<a class='link-btn' href='{safe_url}' target='_blank'>검색 페이지 열기</a>",
+            unsafe_allow_html=True,
+        )
+    else:
+        btn_col3.markdown("<span class='link-btn disabled'>검색 페이지 열기</span>", unsafe_allow_html=True)
+    if base_text:
+        one_line = base_text.replace("\n", " / ")
+        btn_stat_col.markdown(f"<div class='base-stat'>{one_line}</div>", unsafe_allow_html=True)
+    else:
+        btn_stat_col.markdown("<div class='base-stat-empty'>대표아이템 스탯 없음</div>", unsafe_allow_html=True)
 
     include_api = True
-
-    if btn_search:
-        groups = _run_search(df_items, st.session_state.get("query", ""))
-        tokens = _read_tokens(
-            st.session_state.get("stat1", ""),
-            st.session_state.get("stat2", ""),
-            st.session_state.get("stat3", ""),
-        )
-        st.session_state["run_now"] = True
 
     if btn_base:
         text, title = _base_stats_from_query(df_items, st.session_state.get("query", ""))
@@ -728,15 +722,15 @@ with col_left:
 with col_right:
     st.caption("가공 결과")
     proc_rows = st.session_state.get("proc_rows", [])
-    page_size_proc = 26
+    page_size_proc = 10
     proc_page = st.session_state.get("proc_page", 1)
     page_rows, proc_page, proc_pages, proc_total = _paginate_list(proc_rows, proc_page, page_size_proc)
     st.session_state["proc_page"] = proc_page
 
-    nav = st.columns([1, 2, 6])
-    prev_p = nav[0].button("◀", key="proc_prev")
-    nav[1].caption(f"{proc_page}/{proc_pages} · 총 {proc_total}")
-    next_p = nav[2].button("▶", key="proc_next")
+    nav = st.columns([0.6, 0.6, 2, 8])
+    prev_p = nav[0].button("◀", key="proc_prev", type="primary")
+    next_p = nav[1].button("▶", key="proc_next", type="primary")
+    nav[2].caption(f"{proc_page}/{proc_pages} · 총 {proc_total}")
     if prev_p and proc_page > 1:
         st.session_state["proc_page"] = proc_page - 1
         st.rerun()
@@ -750,8 +744,8 @@ with col_right:
             view,
             use_container_width=True,
             hide_index=True,
-            height=380,
-            column_config={"링크": st.column_config.LinkColumn("링크")},
+            height=420,
+            column_config={"링크": st.column_config.LinkColumn("링크", display_text="열기")},
         )
     else:
         st.info("가공 결과가 없습니다.")
@@ -827,26 +821,26 @@ if include_api:
     view = _api_view_df(src, "price" if api_sort == "가격순" else "time")
     page_key = "page_sell" if api_kind == "판매" else "page_buy"
     page = st.session_state.get(page_key, 1)
-    page_view, page, pages, total = _paginate_df(view, page, 16)
+    page_view, page, pages, total = _paginate_df(view, page, 8)
     st.session_state[page_key] = page
 
-    nav = st.columns([1, 2, 6])
+    nav = st.columns([0.6, 0.6, 2, 8])
     prev_key = "sell_prev" if api_kind == "판매" else "buy_prev"
     next_key = "sell_next" if api_kind == "판매" else "buy_next"
-    if nav[0].button("◀", key=prev_key) and page > 1:
+    if nav[0].button("◀", key=prev_key, type="primary") and page > 1:
         st.session_state[page_key] = page - 1
         st.rerun()
-    nav[1].caption(f"{page}/{pages} · 총 {total}")
-    if nav[2].button("▶", key=next_key) and pages and page < pages:
+    if nav[1].button("▶", key=next_key, type="primary") and pages and page < pages:
         st.session_state[page_key] = page + 1
         st.rerun()
+    nav[2].caption(f"{page}/{pages} · 총 {total}")
 
     st.dataframe(
         page_view,
         use_container_width=True,
         hide_index=True,
-        height=320,
-        column_config={"프로필": st.column_config.LinkColumn("프로필")},
+        height=300,
+        column_config={"프로필": st.column_config.LinkColumn("프로필", display_text="열기")},
     )
 
 if groups is None:
