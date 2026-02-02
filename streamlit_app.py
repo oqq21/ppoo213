@@ -133,13 +133,27 @@ def _format_price_man(v) -> str:
 
 
 def _emph_price(v) -> str:
-    s = _format_price_man(v)
-    return f"💰 {s}" if s else ""
-
-
-def _emph_option(v) -> str:
     s = str(v or "").strip()
-    return f"◆ {s}" if s else ""
+    if s:
+        if "만" in s or "메소" in s:
+            return s
+    s = _format_price_man(v)
+    return s
+
+
+def _normalize_option(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, (list, tuple)):
+        parts = [str(x).strip() for x in v if str(x).strip()]
+        return " ".join(parts)
+    s = str(v).strip()
+    if s.startswith("[") and s.endswith("]"):
+        s = s.strip("[]")
+        s = s.replace("'", "").replace('"', "")
+        s = s.replace(",", " ")
+    s = s.replace("+", " ")
+    return " ".join(s.split())
 
 
 def _offer_label(v) -> str:
@@ -197,7 +211,7 @@ def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
         "상태": d.get("tradeStatus", "").map(lambda x: "🟢 판매중" if bool(x) else "⚫ 판매완료") if "tradeStatus" in d.columns else "",
         "아이템": d.get("itemName", ""),
         "가격(만)": d.get("itemPrice", "").map(_emph_price) if "itemPrice" in d.columns else "",
-        "옵션": d.get(opt_col, "").map(_emph_option) if opt_col in d.columns else "",
+        "스탯": d.get(opt_col, "").map(_normalize_option) if opt_col in d.columns else "",
         "코멘트": d.get("comment", "") if "comment" in d.columns else d.get("comment", ""),
         "판매자": d.get("global_name", ""),
         "흥정": d.get("offer_raw", "").map(_offer_label) if "offer_raw" in d.columns else "",
@@ -215,13 +229,13 @@ def _proc_view_df(rows: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     out = pd.DataFrame({
         "일전": df.get("days_ago", ""),
+        "상태": df.get("highlight", "").map(lambda x: "판매중" if bool(x) else "판매완료") if "highlight" in df.columns else "",
         "아이템": df.get("item", ""),
-        "판매자": df.get("seller", ""),
         "가격(만)": df.get("price", "").map(_emph_price) if "price" in df.columns else "",
+        "판매자": df.get("seller", ""),
         "스탯": df.get("stats", ""),
         "비고": df.get("comment", ""),
         "링크": df.get("url", ""),
-        "표시": df.get("highlight", "").map(lambda x: "★" if bool(x) else "") if "highlight" in df.columns else "",
     })
     return out
 
@@ -586,25 +600,27 @@ st.markdown(
       div[data-testid="stMarkdownContainer"] h2 { margin-bottom: 0.1rem; }
       div[data-testid="stToolbar"] { visibility: hidden; height: 0px; }
       .stButton button { padding: 2px 4px; font-size: 6px; white-space: nowrap; }
-      button[kind="primary"] { padding: 4px 12px; font-size: 10px; }
+      button[kind="primary"] { padding: 5px 14px; font-size: 11px; }
       .stRadio label { font-size: 9px; }
       .link-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 4px 12px;
-        min-height: 28px;
+        padding: 5px 14px;
+        min-height: 32px;
         background: #e6e6e6;
         border: 1px solid #cfcfcf;
         border-radius: 6px;
         color: #111;
         text-decoration: none;
-        font-size: 10px;
+        font-size: 11px;
         white-space: nowrap;
+        line-height: 1.1;
       }
       .link-btn.disabled { color: #888; background: #f2f2f2; border-color: #ddd; }
       .base-stat { font-size: 15px; font-weight: 700; color: #000; line-height: 1.3; }
       .base-stat-empty { font-size: 11px; font-weight: 700; color: #000; }
+      div[data-testid="stDataFrame"] table tbody tr td:nth-child(4) { font-weight: 700; }
     </style>
     """,
     unsafe_allow_html=True,
