@@ -3,6 +3,7 @@ import re
 import sys
 from typing import Optional
 from pathlib import Path
+from datetime import datetime
 import streamlit as st
 import pandas as pd
 
@@ -74,6 +75,245 @@ def _selected_items_from_group(df_src: pd.DataFrame, row: pd.Series) -> list[str
     if rep:
         return [rep] + [x for x in names if x != rep]
     return names
+
+
+BASE_STAT_COLS = ["공", "마", "힘", "덱", "인", "럭", "명", "물방", "마방", "이속", "점프", "회피"]
+
+
+def _format_base_stats_from_row(row: pd.Series, cols: list[str] = BASE_STAT_COLS) -> str:
+    parts: list[str] = []
+    for c in cols:
+        if c in row.index:
+            try:
+                v = int(row[c])
+            except Exception:
+                try:
+                    v = int(float(row[c]))
+                except Exception:
+                    continue
+            if v != 0:
+                parts.append(f"{c} {v}")
+    return "\n".join(parts) if parts else "(모든 기본 스탯 = 0)"
+
+
+def _format_mtime(path: Path) -> str:
+    try:
+        ts = path.stat().st_mtime
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return "알 수 없음"
+
+
+def _relative_time(ts) -> str:
+    try:
+        t = pd.to_datetime(ts, utc=True, errors="coerce")
+        if pd.isna(t):
+            return ""
+        now = pd.Timestamp.now(tz="UTC")
+        sec = int(max(0, (now - t).total_seconds()))
+        if sec < 3600:
+            return f"{max(1, sec // 60)}분 전"
+        if sec < 86400:
+            return f"{max(1, sec // 3600)}시간 전"
+        return f"{max(1, sec // 86400)}일 전"
+    except Exception:
+        return ""
+
+
+def _format_price_man(v) -> str:
+    try:
+        from your_app.processing.legacy_processor import _format_price_man as _fmt
+        return _fmt(v)
+    except Exception:
+        try:
+            return f"{int(float(v)):,}"
+        except Exception:
+            return ""
+
+
+def _offer_label(v) -> str:
+    try:
+        iv = int(v)
+        if iv == 0:
+            return "흥정불가"
+        if iv == 1:
+            return "흥정가능"
+        if iv == 2:
+            return ""
+    except Exception:
+        pass
+    s = str(v or "")
+    if "불가" in s:
+        return "흥정불가"
+    if "가능" in s:
+        return "흥정가능"
+    return ""
+
+
+def _status_label(v) -> str:
+    try:
+        return "판매중" if bool(v) else "판매완료"
+    except Exception:
+        return ""
+
+
+def _format_date_key(v) -> str:
+    s = str(v or "")
+    if len(s) == 6 and s.isdigit():
+        return f"20{s[0:2]}-{s[2:4]}-{s[4:6]}"
+    return s
+
+
+def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    d = df.copy()
+    if sort_key == "price" and "itemPrice" in d.columns:
+        d["_sort"] = pd.to_numeric(d["itemPrice"], errors="coerce").fillna(0)
+        d = d.sort_values("_sort", ascending=True)
+    elif "updated_at" in d.columns:
+        d["_sort"] = pd.to_datetime(d["updated_at"], errors="coerce")
+        d = d.sort_values("_sort", ascending=False)
+    d = d.drop(columns=["_sort"], errors="ignore")
+
+    opt_col = "optionSummarize" if "optionSummarize" in d.columns else "option"
+    out = pd.DataFrame({
+        "아이템": d.get("itemName", ""),
+        "가격(만)": d.get("itemPrice", "").map(_format_price_man) if "itemPrice" in d.columns else "",
+        "옵션": d.get(opt_col, ""),
+        "판매자": d.get("global_name", ""),
+        "흥정": d.get("offer_raw", "").map(_offer_label) if "offer_raw" in d.columns else "",
+        "경신": d.get("updated_at", "").map(_relative_time) if "updated_at" in d.columns else "",
+        "등록": d.get("created_at", "").map(_relative_time) if "created_at" in d.columns else "",
+        "상태": d.get("tradeStatus", "").map(_status_label) if "tradeStatus" in d.columns else "",
+        "서버": d.get("server", ""),
+        "거래링크": d.get("tradeUrl", ""),
+        "프로필": d.get("profileUrl", ""),
+    })
+    return out
+
+
+def _proc_view_df(rows: list[dict]) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    out = pd.DataFrame({
+        "날짜": df.get("date_key", "").map(_format_date_key) if "date_key" in df.columns else df.get("date_raw", ""),
+        "일전": df.get("days_ago", ""),
+        "아이템": df.get("item", ""),
+        "판매자": df.get("seller", ""),
+        "가격(만)": df.get("price", ""),
+        "스탯": df.get("stats", ""),
+        "비고": df.get("comment", ""),
+        "링크": df.get("url", ""),
+        "표시": df.get("highlight", "").map(lambda x: "★" if bool(x) else "") if "highlight" in df.columns else "",
+    })
+    return out
+
+
+def _build_site_search_url(sheet: str, gender: str, reqlevel: int, item_name: str, stat_tokens: list[str]) -> str:
+    try:
+        from your_app.api.client import build_params
+        from your_app.common.config import ORDER
+        from urllib.parse import urlencode, quote
+    except Exception:
+        return ""
+
+    p = build_params(sheet, gender, reqlevel, item_name=item_name, stat_tokens=stat_tokens)
+    if not p:
+        return ""
+
+    item_code = (p.get("itemCode") or "").strip()
+    if item_code:
+        base = f"https://mapleland.gg/item/{quote(item_code)}"
+        allow = [
+            "lowPrice", "highPrice", "lowincPAD", "highincPAD", "lowincMAD", "highincMAD",
+            "lowHapma", "highHapma", "lowUpgrade", "highUpgrade", "lowTuc", "highTuc",
+        ]
+        have = set(k for k in p.keys() if p.get(k) not in (None, ""))
+        q = [(k, p[k]) for k in allow if k in have]
+        if "lowPrice" not in have:
+            q.append(("lowPrice", ""))
+        if "highPrice" not in have:
+            q.append(("highPrice", "9999999999"))
+        return base + "?" + urlencode(q, doseq=True)
+
+    item_type = (p.get("itemType") or "").strip()
+    if not item_type:
+        return ""
+    base = f"https://mapleland.gg/items/{quote(item_type)}"
+    q = []
+    for k in ORDER:
+        if k == "itemType":
+            continue
+        v = p.get(k, "")
+        if v in (None, ""):
+            continue
+        q.append((k, v))
+    if "lowPrice" not in p:
+        q.append(("lowPrice", ""))
+    if "highPrice" not in p:
+        q.append(("highPrice", "9999999999"))
+    if "lowLevel" in p and "highLevel" not in p:
+        q.append(("highLevel", p.get("lowLevel", "")))
+    return base + "?" + urlencode(q, doseq=True)
+
+
+def _run_search(df_items: pd.DataFrame, query: str) -> pd.DataFrame:
+    q = (query or "").strip()
+    if q:
+        m = mask_for_query(df_items, q)
+        df_filtered = df_items[m].reset_index(drop=True)
+    else:
+        df_filtered = df_items.copy()
+    groups = group_by_sgr(df_filtered)
+    st.session_state["df_filtered"] = df_filtered
+    st.session_state["groups"] = groups
+    st.session_state["last_query"] = q
+    return groups
+
+
+def _push_history(query: str, tokens: list[str]) -> None:
+    hist = st.session_state.get("history", [])
+    item = {
+        "검색어": query,
+        "스탯": " ".join(tokens),
+        "시간": datetime.now().strftime("%H:%M:%S"),
+    }
+    hist = [item] + [h for h in hist if h.get("검색어") != query]
+    st.session_state["history"] = hist[:20]
+
+
+def _base_stats_from_query(df_items: pd.DataFrame, query: str) -> tuple[str, str]:
+    q = (query or "").strip()
+    if not q:
+        return "", "검색어를 입력하세요."
+    try:
+        m = mask_for_query(df_items, q)
+    except Exception:
+        m = df_items["itemName"].astype(str).str.contains(q, regex=False)
+    df_filtered = df_items[m]
+    if df_filtered.empty:
+        return "", f"대표아이템을 찾지 못했습니다: {q}"
+    groups = group_by_sgr(df_filtered)
+    if groups.empty:
+        return "", f"대표아이템을 찾지 못했습니다: {q}"
+    if len(groups) != 1:
+        cand = ", ".join(map(str, groups["대표아이템명"].head(5).tolist()))
+        return "", f"여러 개가 일치합니다: {cand}"
+    row_g = groups.iloc[0]
+    item_name = str(row_g.get("대표아이템명", ""))
+    cond = df_filtered["itemName"].astype(str).eq(item_name)
+    for col in ("sheet", "gender", "reqLevel"):
+        if col in df_filtered.columns and col in groups.columns:
+            cond &= (df_filtered[col] == row_g[col])
+    df_one = df_filtered[cond]
+    if df_one.empty:
+        df_one = df_filtered.iloc[[0]]
+    row = df_one.iloc[0]
+    text = _format_base_stats_from_row(row)
+    title = f"{item_name} ({row_g.get('sheet','')})"
+    return text, title
 
 
 def _apply_api_post_filters(df: pd.DataFrame, tokens: list[str], current_query: str, df_items: pd.DataFrame) -> pd.DataFrame:
@@ -229,15 +469,21 @@ def _fetch_api_for_groups(df_groups_sel: pd.DataFrame, tokens: list[str], df_ite
 
 
 st.set_page_config(page_title="아이템 검색 웹", layout="wide")
+st.markdown(
+    """
+    <style>
+      .block-container { max-width: 1400px; padding-top: 1.2rem; padding-bottom: 2rem; }
+      div[data-testid="stDataFrame"] { font-size: 14px; }
+      div[data-testid="stMarkdownContainer"] h2 { margin-bottom: 0.3rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("아이템 검색/가공 (웹)")
 
 excel_file = BASE_DIR / "item.xlsx"
 sales_file = _find_sales_file(BASE_DIR)
-
-with st.sidebar:
-    st.header("파일 상태")
-    st.write(f"item.xlsx: {'OK' if excel_file.exists() else 'MISSING'}")
-    st.write(f"parquet: {str(sales_file) if sales_file else 'MISSING'}")
 
 if not excel_file.exists():
     st.error("item.xlsx 파일이 없습니다. 먼저 업로드/배치해주세요.")
@@ -247,53 +493,125 @@ if not sales_file:
     st.stop()
 
 mode = _init_sales_backend(str(sales_file))
-
 df_items = _load_items(str(excel_file))
 
-query = st.text_input("아이템 검색어", key="query")
-col1, col2, col3 = st.columns(3)
-with col1:
-    stat1 = st.text_input("스탯1", key="stat1")
-with col2:
-    stat2 = st.text_input("스탯2", key="stat2")
-with col3:
-    stat3 = st.text_input("스탯3", key="stat3")
+mtime_text = _format_mtime(sales_file)
+st.caption(f"parquet 최종수정: {mtime_text} · backend: {mode}")
+
+with st.form("search_form", clear_on_submit=False):
+    st.subheader("1  (검색어 / 스탯 입력)")
+    col_q, col_s1, col_s2, col_s3 = st.columns([3, 1, 1, 1])
+    with col_q:
+        query = st.text_input("검색어", key="query")
+    with col_s1:
+        stat1 = st.text_input("스탯1", key="stat1")
+    with col_s2:
+        stat2 = st.text_input("스탯2", key="stat2")
+    with col_s3:
+        stat3 = st.text_input("스탯3", key="stat3")
+
+    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
+    btn_search = btn_col1.form_submit_button("검색", type="primary")
+    btn_open = btn_col2.form_submit_button("검색 페이지 열기")
+    btn_base = btn_col3.form_submit_button("대표아이템 스탯")
 
 include_api = st.checkbox("API 조회 포함", value=True)
 
-if st.button("검색", type="primary"):
-    q = (query or "").strip()
-    if q:
-        m = mask_for_query(df_items, q)
-        df_filtered = df_items[m].reset_index(drop=True)
+if btn_search:
+    groups = _run_search(df_items, st.session_state.get("query", ""))
+    tokens = _read_tokens(
+        st.session_state.get("stat1", ""),
+        st.session_state.get("stat2", ""),
+        st.session_state.get("stat3", ""),
+    )
+    _push_history(st.session_state.get("query", ""), tokens)
+
+if btn_open:
+    groups = st.session_state.get("groups")
+    if groups is None or groups.empty:
+        groups = _run_search(df_items, st.session_state.get("query", ""))
+    if groups is not None and not groups.empty:
+        sel_idx = st.session_state.get("selected_group_idx", 0)
+        sel_idx = min(max(0, int(sel_idx)), len(groups) - 1)
+        row = groups.iloc[sel_idx]
+        tokens = _read_tokens(
+            st.session_state.get("stat1", ""),
+            st.session_state.get("stat2", ""),
+            st.session_state.get("stat3", ""),
+        )
+        url = _build_site_search_url(
+            str(row.get("sheet", "")),
+            str(row.get("gender", "")),
+            int(float(row.get("reqLevel", 0) or 0)),
+            str(row.get("대표아이템명", "")),
+            tokens,
+        )
+        if url:
+            st.session_state["open_url"] = url
+        else:
+            st.warning("검색 URL을 만들 수 없습니다.")
     else:
-        df_filtered = df_items.copy()
+        st.warning("먼저 검색을 실행하세요.")
 
-    groups = group_by_sgr(df_filtered)
-    st.session_state["df_filtered"] = df_filtered
-    st.session_state["groups"] = groups
-    st.session_state["last_query"] = q
-
+if btn_base:
+    text, title = _base_stats_from_query(df_items, st.session_state.get("query", ""))
+    st.session_state["base_stat_text"] = text
+    st.session_state["base_stat_title"] = title
 
 groups = st.session_state.get("groups")
-if groups is not None:
-    st.subheader("그룹 목록")
-    st.dataframe(groups, use_container_width=True)
+history = st.session_state.get("history", [])
 
-    if not groups.empty:
-        labels = [(_format_group_label(row)) for _, row in groups.iterrows()]
-        sel_idx = st.selectbox("그룹 선택", options=list(range(len(labels))), format_func=lambda i: labels[i])
-        run_all = st.button("전체 조회", key="run_all")
-        run_one = st.button("선택 조회", key="run_one")
+if groups is not None:
+    left, right = st.columns([2.2, 1], gap="large")
+    with left:
+        st.subheader("2-1  (그룹 요약)")
+        st.dataframe(groups, use_container_width=True, hide_index=True)
+
+        if not groups.empty:
+            labels = [(_format_group_label(row)) for _, row in groups.iterrows()]
+            sel_idx = st.selectbox(
+                "그룹 선택",
+                options=list(range(len(labels))),
+                index=min(st.session_state.get("selected_group_idx", 0), len(labels) - 1),
+                format_func=lambda i: labels[i],
+            )
+            st.session_state["selected_group_idx"] = sel_idx
+
+            btn_a, btn_b = st.columns([1, 1])
+            run_all = btn_a.button("전체 조회", key="run_all")
+            run_one = btn_b.button("선택 조회", key="run_one")
+
+    with right:
+        st.subheader("2-2  (검색 기록)")
+        if history:
+            st.dataframe(pd.DataFrame(history), use_container_width=True, hide_index=True)
+        else:
+            st.caption("검색 기록이 없습니다.")
+
+        base_text = st.session_state.get("base_stat_text", "")
+        base_title = st.session_state.get("base_stat_title", "")
+        if base_text:
+            st.subheader("대표아이템 스탯")
+            st.caption(base_title)
+            st.text(base_text)
+
+    if st.session_state.get("open_url"):
+        st.link_button("검색 페이지 열기", st.session_state["open_url"])
+
+    if groups is not None and not groups.empty:
+        tokens = _read_tokens(
+            st.session_state.get("stat1", ""),
+            st.session_state.get("stat2", ""),
+            st.session_state.get("stat3", ""),
+        )
+        df_filtered = st.session_state.get("df_filtered", df_items)
 
         if run_all or run_one:
-            tokens = _read_tokens(stat1, stat2, stat3)
-            df_filtered = st.session_state.get("df_filtered", df_items)
             if run_all:
                 target_groups = groups[["대표아이템명", "sheet", "gender", "reqLevel"]]
             else:
                 row = groups.iloc[int(sel_idx)]
-                target_groups = pd.DataFrame([row])[ ["대표아이템명", "sheet", "gender", "reqLevel"] ]
+                target_groups = pd.DataFrame([row])[["대표아이템명", "sheet", "gender", "reqLevel"]]
 
             with st.spinner("계산 중..."):
                 api_sell = pd.DataFrame()
@@ -301,13 +619,12 @@ if groups is not None:
                 if include_api:
                     df_api = _fetch_api_for_groups(target_groups, tokens, df_items)
                     if not df_api.empty:
-                        df_api = _apply_api_post_filters(df_api, tokens, query, df_items)
+                        df_api = _apply_api_post_filters(df_api, tokens, st.session_state.get("query", ""), df_items)
                         sell_mask = df_api.get("tradeType", pd.Series(["sell"] * len(df_api))).astype(str).str.lower().eq("sell")
                         buy_mask = df_api.get("tradeType", pd.Series(["sell"] * len(df_api))).astype(str).str.lower().eq("buy")
                         api_sell = df_api[sell_mask].reset_index(drop=True)
                         api_buy = df_api[buy_mask].reset_index(drop=True)
 
-                # 가공 결과 (slot4)
                 proc_rows = []
                 for _, row in target_groups.iterrows():
                     selected_items = _selected_items_from_group(df_filtered, row)
@@ -316,21 +633,67 @@ if groups is not None:
                     result = process_items(tokens, row.get("sheet", ""), selected_items, str(excel_file), str(sales_file))
                     proc_rows.extend(result.get(4, []) or [])
 
-            if include_api:
-                st.subheader("API 결과 - 판매")
-                st.dataframe(api_sell, use_container_width=True)
-                st.subheader("API 결과 - 구매")
-                st.dataframe(api_buy, use_container_width=True)
+            st.session_state["api_sell"] = api_sell
+            st.session_state["api_buy"] = api_buy
+            st.session_state["proc_rows"] = proc_rows
 
-            st.subheader("가공 결과 (slot4)")
-            if proc_rows:
-                df_proc = pd.DataFrame(proc_rows)
-                # 기본 정렬: 최신 날짜 우선
-                if "date_raw" in df_proc.columns:
-                    df_proc = df_proc.sort_values("date_raw", ascending=False)
-                st.dataframe(df_proc, use_container_width=True)
+    api_sell = st.session_state.get("api_sell", pd.DataFrame())
+    api_buy = st.session_state.get("api_buy", pd.DataFrame())
+    proc_rows = st.session_state.get("proc_rows", [])
+
+    if include_api:
+        st.subheader("3  (API 결과)")
+        tab_sell, tab_buy = st.tabs(["판매", "구매"])
+
+        with tab_sell:
+            st.caption(f"총 {len(api_sell)}건")
+            sort_sell = st.selectbox("정렬", ["최신순", "가격순"], key="sort_sell")
+            show_raw = st.checkbox("원본 컬럼 보기", value=False, key="raw_sell")
+            view = _api_view_df(api_sell, "price" if sort_sell == "가격순" else "time")
+            if show_raw:
+                st.dataframe(api_sell, use_container_width=True, hide_index=True)
             else:
-                st.info("가공 결과가 없습니다.")
+                st.dataframe(
+                    view,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "거래링크": st.column_config.LinkColumn("거래"),
+                        "프로필": st.column_config.LinkColumn("프로필"),
+                    },
+                )
+
+        with tab_buy:
+            st.caption(f"총 {len(api_buy)}건")
+            sort_buy = st.selectbox("정렬", ["최신순", "가격순"], key="sort_buy")
+            show_raw = st.checkbox("원본 컬럼 보기", value=False, key="raw_buy")
+            view = _api_view_df(api_buy, "price" if sort_buy == "가격순" else "time")
+            if show_raw:
+                st.dataframe(api_buy, use_container_width=True, hide_index=True)
+            else:
+                st.dataframe(
+                    view,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "거래링크": st.column_config.LinkColumn("거래"),
+                        "프로필": st.column_config.LinkColumn("프로필"),
+                    },
+                )
+
+    st.subheader("4  (가공 결과)")
+    if proc_rows:
+        view = _proc_view_df(proc_rows)
+        st.dataframe(
+            view,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "링크": st.column_config.LinkColumn("링크"),
+            },
+        )
+    else:
+        st.info("가공 결과가 없습니다.")
 
 else:
     st.info("검색어를 입력하고 검색 버튼을 눌러주세요.")
