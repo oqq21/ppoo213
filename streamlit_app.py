@@ -203,7 +203,6 @@ def _proc_view_df(rows: list[dict]) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
     out = pd.DataFrame({
-        "날짜": df.get("date_key", "").map(_format_date_key) if "date_key" in df.columns else df.get("date_raw", ""),
         "일전": df.get("days_ago", ""),
         "아이템": df.get("item", ""),
         "판매자": df.get("seller", ""),
@@ -566,24 +565,31 @@ st.markdown(
     <style>
       body, .stApp { background-color: #f2f2f2; color: #111; }
       .block-container { max-width: 100%; padding-top: 0.2rem; padding-bottom: 0.4rem; }
-      div[data-testid="stDataFrame"] { font-size: 10px; }
+      div[data-testid="stDataFrame"] { font-size: 11px; }
       .stMarkdown p { margin-bottom: 0.1rem; }
       div[data-testid="stMarkdownContainer"] h2 { margin-bottom: 0.1rem; }
       div[data-testid="stToolbar"] { visibility: hidden; height: 0px; }
-      .stButton button { padding: 2px 5px; font-size: 7px; }
-      button[kind="primary"] { padding: 3px 9px; font-size: 9px; }
+      .stButton button { padding: 2px 4px; font-size: 6px; white-space: nowrap; }
+      div[data-testid="stForm"] .stButton button { padding: 3px 8px; font-size: 8px; }
+      button[kind="primary"] { padding: 3px 10px; font-size: 9px; }
       .stRadio label { font-size: 9px; }
       .link-btn {
-        display: inline-block;
-        padding: 4px 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 3px 10px;
+        min-height: 24px;
         background: #e6e6e6;
         border: 1px solid #cfcfcf;
         border-radius: 6px;
         color: #111;
         text-decoration: none;
         font-size: 8px;
+        white-space: nowrap;
       }
       .link-btn.disabled { color: #888; background: #f2f2f2; border-color: #ddd; }
+      .base-stat { font-size: 12px; font-weight: 700; color: #000; }
+      .base-stat-empty { font-size: 11px; font-weight: 700; color: #000; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -625,6 +631,9 @@ if st.session_state.get("auto_search"):
 col_left, col_right = st.columns([1.2, 2.1], gap="large")
 
 with col_left:
+    base_text = st.session_state.get("base_stat_text", "")
+    base_title = st.session_state.get("base_stat_title", "")
+
     with st.form("search_form", clear_on_submit=False):
         col_q, col_s1, col_s2, col_s3 = st.columns([3, 1, 1, 1])
         with col_q:
@@ -649,7 +658,7 @@ with col_left:
                 tokens_for_link,
             )
 
-        btn_col1, btn_col2, btn_col3, _btn_spacer = st.columns([1, 1, 1, 4], gap="small")
+        btn_col1, btn_col2, btn_col3, btn_stat_col = st.columns([1.2, 1.4, 1.6, 3], gap="small")
         btn_search = btn_col1.form_submit_button("검색", type="primary")
         btn_base = btn_col2.form_submit_button("대표아이템 스탯")
         if open_url:
@@ -660,6 +669,11 @@ with col_left:
             )
         else:
             btn_col3.markdown("<span class='link-btn disabled'>검색 페이지 열기</span>", unsafe_allow_html=True)
+        if base_text:
+            one_line = base_text.replace("\n", " / ")
+            btn_stat_col.markdown(f"<div class='base-stat'>{base_title}: {one_line}</div>", unsafe_allow_html=True)
+        else:
+            btn_stat_col.markdown("<div class='base-stat-empty'>대표아이템 스탯 없음</div>", unsafe_allow_html=True)
 
     include_api = True
 
@@ -680,22 +694,12 @@ with col_left:
     groups = st.session_state.get("groups")
     history = st.session_state.get("history", [])
 
-    base_text = st.session_state.get("base_stat_text", "")
-    base_title = st.session_state.get("base_stat_title", "")
-
-    st.markdown("<div style='font-weight:700;color:#000;font-size:12px;'>대표아이템 스탯 / 기록</div>", unsafe_allow_html=True)
-    col_bs, col_hist = st.columns([1.2, 1])
-    with col_bs:
-        if base_text:
-            one_line = base_text.replace("\n", " / ")
-            st.markdown(f"<div style='color:#000;font-weight:700;font-size:11px;'>{base_title}: {one_line}</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div style='color:#000;font-weight:700;font-size:11px;'>대표아이템 스탯 없음</div>", unsafe_allow_html=True)
-    with col_hist:
-        if history:
-            st.markdown("<div style='color:#000;font-weight:700;font-size:11px;'>최근 9개</div>", unsafe_allow_html=True)
-        else:
-            st.markdown("<div style='color:#000;font-weight:700;font-size:11px;'>검색 기록 없음</div>", unsafe_allow_html=True)
+    col_hist_title, col_hist_info = st.columns([1, 1])
+    col_hist_title.markdown("<div style='font-weight:700;color:#000;font-size:12px;'>검색 기록</div>", unsafe_allow_html=True)
+    if history:
+        col_hist_info.markdown("<div style='color:#000;font-weight:700;font-size:11px;'>최근 9개</div>", unsafe_allow_html=True)
+    else:
+        col_hist_info.markdown("<div style='color:#000;font-weight:700;font-size:11px;'>검색 기록 없음</div>", unsafe_allow_html=True)
 
     if history:
         hist = history[:9]
