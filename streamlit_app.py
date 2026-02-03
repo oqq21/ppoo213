@@ -105,6 +105,14 @@ def _format_mtime(path: Path) -> str:
         return "알 수 없음"
 
 
+def _format_ctime(path: Path) -> str:
+    try:
+        ts = path.stat().st_ctime
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return "알 수 없음"
+
+
 def _relative_time(ts) -> str:
     try:
         t = pd.to_datetime(ts, utc=True, errors="coerce")
@@ -654,7 +662,13 @@ def _on_query_change() -> None:
         st.session_state["base_stat_title"] = ""
 
 mtime_text = _format_mtime(sales_file)
-st.caption(f"parquet 최종수정: {mtime_text} · backend: {mode}")
+ctime_text = _format_ctime(sales_file)
+st.markdown(
+    f"<div style='text-align:right;font-size:11px;color:#555;'>"
+    f"parquet 생성일: {ctime_text} · 최종수정: {mtime_text} · backend: {mode}"
+    f"</div>",
+    unsafe_allow_html=True,
+)
 
 pending = st.session_state.pop("pending_apply", None)
 if isinstance(pending, dict) and pending:

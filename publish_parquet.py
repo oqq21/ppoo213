@@ -4,6 +4,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -43,6 +44,35 @@ def _find_default_source(base_dir: Path) -> Path | None:
 
 def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(args, cwd=str(cwd), text=True, capture_output=True)
+
+
+def _git_ok(res: subprocess.CompletedProcess) -> bool:
+    return res.returncode == 0
+
+
+def _pick_remote_branch(repo: Path, preferred: str) -> tuple[str, str] | None:
+    fetch_res = _run_git(["git", "fetch", "origin"], repo)
+    if not _git_ok(fetch_res):
+        print("git fetch failed:", fetch_res.stderr.strip(), file=sys.stderr)
+        return None
+
+    candidates = []
+    if preferred:
+        candidates.append(preferred)
+    candidates.extend(["main", "master"])
+
+    for name in candidates:
+        ref = f"origin/{name}"
+        verify = _run_git(["git", "rev-parse", "--verify", ref], repo)
+        if _git_ok(verify):
+            return name, ref
+    return None
+
+
+def _cleanup_worktree(repo: Path, worktree: Path) -> None:
+    _run_git(["git", "worktree", "remove", "--force", str(worktree)], repo)
+    if worktree.exists():
+        shutil.rmtree(worktree, ignore_errors=True)
 
 
 def main() -> int:
@@ -88,28 +118,62 @@ def main() -> int:
         return 3
     repo = Path(git_root.stdout.strip())
 
-    add_res = _run_git(["git", "add", str(target.relative_to(repo))], repo)
-    if add_res.returncode != 0:
-        print("git add failed:", add_res.stderr.strip(), file=sys.stderr)
+    try:
+        target_rel = target.relative_to(repo)
+    except ValueError:
+        print("Target must be inside the git repo to commit.", file=sys.stderr)
         return 3
 
-    diff_res = _run_git(["git", "diff", "--cached", "--quiet"], repo)
-    if diff_res.returncode == 0:
-        print("No changes to commit.")
+    branch_res = _run_git(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo)
+    preferred_branch = branch_res.stdout.strip() if _git_ok(branch_res) else ""
+    if preferred_branch in ("", "HEAD"):
+        preferred_branch = "main"
+
+    branch_info = _pick_remote_branch(repo, preferred_branch)
+    if branch_info is None:
+        print("Remote branch not found (origin/main or origin/master).", file=sys.stderr)
+        return 3
+    branch_name, remote_ref = branch_info
+
+    worktree_dir = Path(tempfile.mkdtemp(prefix="publish_worktree_"))
+    try:
+        add_wt = _run_git(["git", "worktree", "add", "--detach", str(worktree_dir), remote_ref], repo)
+        if not _git_ok(add_wt):
+            print("git worktree add failed:", add_wt.stderr.strip(), file=sys.stderr)
+            return 3
+
+        checkout_res = _run_git(["git", "checkout", "-B", branch_name, remote_ref], worktree_dir)
+        if not _git_ok(checkout_res):
+            print("git checkout failed:", checkout_res.stderr.strip(), file=sys.stderr)
+            return 3
+
+        worktree_target = worktree_dir / target_rel
+        _copy_atomic(target, worktree_target)
+
+        add_res = _run_git(["git", "add", str(target_rel)], worktree_dir)
+        if add_res.returncode != 0:
+            print("git add failed:", add_res.stderr.strip(), file=sys.stderr)
+            return 3
+
+        diff_res = _run_git(["git", "diff", "--cached", "--quiet"], worktree_dir)
+        if diff_res.returncode == 0:
+            print("No changes to commit.")
+            return 0
+
+        commit_res = _run_git(["git", "commit", "-m", args.message], worktree_dir)
+        if commit_res.returncode != 0:
+            print("git commit failed:", commit_res.stderr.strip(), file=sys.stderr)
+            return 3
+        print(commit_res.stdout.strip())
+
+        push_res = _run_git(["git", "push", "origin", branch_name], worktree_dir)
+        if push_res.returncode != 0:
+            print("git push failed:", push_res.stderr.strip(), file=sys.stderr)
+            return 3
+        print(push_res.stdout.strip())
         return 0
-
-    commit_res = _run_git(["git", "commit", "-m", args.message], repo)
-    if commit_res.returncode != 0:
-        print("git commit failed:", commit_res.stderr.strip(), file=sys.stderr)
-        return 3
-    print(commit_res.stdout.strip())
-
-    push_res = _run_git(["git", "push"], repo)
-    if push_res.returncode != 0:
-        print("git push failed:", push_res.stderr.strip(), file=sys.stderr)
-        return 3
-    print(push_res.stdout.strip())
-    return 0
+    finally:
+        _cleanup_worktree(repo, worktree_dir)
 
 
 if __name__ == "__main__":
