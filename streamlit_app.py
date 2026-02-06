@@ -197,12 +197,29 @@ def _format_date_key(v) -> str:
     return s
 
 
+def _price_to_number(v) -> float | None:
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    if not s:
+        return None
+    digits = re.findall(r"\d+", s.replace(",", ""))
+    if not digits:
+        return None
+    try:
+        return float("".join(digits))
+    except Exception:
+        return None
+
+
 def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     d = df.copy()
     if sort_key == "price" and "itemPrice" in d.columns:
-        d["_sort"] = pd.to_numeric(d["itemPrice"], errors="coerce").fillna(0)
+        d["_sort"] = d["itemPrice"].map(_price_to_number).fillna(0)
         d = d.sort_values("_sort", ascending=True)
     elif "updated_at" in d.columns:
         d["_sort"] = pd.to_datetime(d["updated_at"], errors="coerce")
