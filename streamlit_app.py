@@ -902,6 +902,7 @@ if include_api:
     if api_sort == "가격순" and "가격(만)" in view.columns:
         view["_sort_price"] = view["가격(만)"].map(_price_to_number).fillna(0)
         view = view.sort_values("_sort_price", ascending=True, kind="mergesort").drop(columns=["_sort_price"], errors="ignore").reset_index(drop=True)
+        st.session_state["api_render_id"] = st.session_state.get("api_render_id", 0) + 1
     page_key = "page_sell" if api_kind == "판매" else "page_buy"
     page = st.session_state.get(page_key, 1)
     page_view, page, pages, total = _paginate_df(view, page, 7)
@@ -923,7 +924,7 @@ if include_api:
         use_container_width=True,
         hide_index=True,
         height=300,
-        key=f"api_df_{api_kind}_{api_sort}",
+        key=f"api_df_{api_kind}_{api_sort}_{st.session_state.get('api_render_id', 0)}",
         column_config={
             "색": st.column_config.Column("색", width="small"),
             "상태": st.column_config.Column("상태", width="small"),
