@@ -205,7 +205,24 @@ def _price_to_number(v) -> float | None:
     s = str(v).strip()
     if not s:
         return None
-    digits = re.findall(r"\d+", s.replace(",", ""))
+    s = s.replace(",", "").replace(" ", "")
+    # Handle Korean units like "1억6500만"
+    try:
+        if "억" in s:
+            parts = s.split("억", 1)
+            eok = int(re.findall(r"\d+", parts[0])[0]) if re.findall(r"\d+", parts[0]) else 0
+            man = 0
+            if "만" in parts[1]:
+                man_digits = re.findall(r"\d+", parts[1])
+                man = int(man_digits[0]) if man_digits else 0
+            return float(eok * 10000 + man)
+        if "만" in s:
+            man_digits = re.findall(r"\d+", s)
+            if man_digits:
+                return float(int(man_digits[0]))
+    except Exception:
+        pass
+    digits = re.findall(r"\d+", s)
     if not digits:
         return None
     try:
