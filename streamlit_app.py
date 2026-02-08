@@ -19,7 +19,7 @@ from your_app.api.client import build_params, fetch_json_with_retries, parse_tra
 from your_app.processing.legacy_processor import process_items
 from your_app.processing import sales_store
 
-PREFERRED_PARQUET = ["sales_10000.parquet", "요약본.parquet", "data.parquet"]
+PREFERRED_PARQUET = ["요약본.parquet"]
 
 
 def _find_sales_file(base_dir: Path) -> Optional[Path]:

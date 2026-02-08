@@ -27,14 +27,8 @@ def _find_default_source(base_dir: Path) -> Path | None:
     cwd = Path.cwd()
     candidates = [
         cwd / "요약본.parquet",
-        cwd / "sales_10000.parquet",
-        cwd / "data.parquet",
         base_dir / "요약본.parquet",
-        base_dir / "sales_10000.parquet",
-        base_dir / "data.parquet",
         base_dir.parent / "요약본.parquet",
-        base_dir.parent / "sales_10000.parquet",
-        base_dir.parent / "data.parquet",
     ]
     for p in candidates:
         if p.exists():
