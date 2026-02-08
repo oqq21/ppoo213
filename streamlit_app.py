@@ -899,6 +899,9 @@ if include_api:
 
     src = api_sell if api_kind == "판매" else api_buy
     view = _api_view_df(src, "price" if api_sort == "가격순" else "time")
+    if api_sort == "가격순" and "가격(만)" in view.columns:
+        view["_sort_price"] = view["가격(만)"].map(_price_to_number).fillna(0)
+        view = view.sort_values("_sort_price", ascending=True).drop(columns=["_sort_price"], errors="ignore")
     page_key = "page_sell" if api_kind == "판매" else "page_buy"
     page = st.session_state.get(page_key, 1)
     page_view, page, pages, total = _paginate_df(view, page, 7)
