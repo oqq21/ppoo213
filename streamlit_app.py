@@ -663,6 +663,8 @@ st.markdown(
       .base-stat { font-size: 15px; font-weight: 700; color: #000; line-height: 1.3; }
       .base-stat-empty { font-size: 11px; font-weight: 700; color: #000; }
       div[data-testid="stDataFrame"] table tbody tr td:nth-child(4) { font-weight: 700; }
+      div[data-testid="stDataFrame"] thead tr th { pointer-events: none; }
+      div[data-testid="stDataFrame"] thead { cursor: default; }
     </style>
     """,
     unsafe_allow_html=True,
