@@ -81,6 +81,36 @@ def _normalize_itemname_for_match(s: str) -> str:
     return base + extra
 
 
+def _normalize_itemname_for_match_strict(s: str) -> str:
+    """
+    아이템명 비교용 정규화 (성별 토큰 보존)
+      - 소문자 변환
+      - 괄호 안 텍스트를 지우지 않고 붙여서 보존(예: 망토(이속) → 망토이속)
+      - 공백·특수부호 제거
+    """
+    raw = str(s or "").lower()
+    paren_parts = re.findall(r"\(([^)]*)\)", raw)
+    main = re.sub(r"\([^)]*\)", "", raw)
+
+    def _strip_tokens(x: str) -> str:
+        return re.sub(r"[^0-9a-zA-Z가-힣]+", "", x)
+
+    base = _strip_tokens(main)
+    extra = _strip_tokens("".join(paren_parts))
+    return base + extra
+
+
+def _has_gender_token(s: str) -> bool:
+    s = str(s or "")
+    if "(남" in s or "(여" in s:
+        return True
+    if "남자" in s or "여자" in s:
+        return True
+    if s.endswith("남") or s.endswith("여"):
+        return True
+    return False
+
+
 def _name_matches(row_name: str, selected_items: list) -> bool:
     """
     (참고용) 부분/초성 매칭. 현재 메인 필터는 동등비교를 사용.
@@ -299,6 +329,10 @@ def _prepare_sales_df(df: "DataFrame") -> "DataFrame":
         df["_name_norm"] = df["C"].astype(str).map(_normalize_itemname_for_match)
     except Exception:
         df["_name_norm"] = ""
+    try:
+        df["_name_norm_strict"] = df["C"].astype(str).map(_normalize_itemname_for_match_strict)
+    except Exception:
+        df["_name_norm_strict"] = ""
     # add columns
     for k in _ADD_KEYS:
         col = f"{k}_add"
@@ -512,12 +546,16 @@ def process_items(
             df = df[df["시트명"] == selected_sheet].copy()
 
         # 3-2) 이름 필터 (정규화 동등 비교 / 벡터)
+        strict_match = any(_has_gender_token(nm) for nm in (selected_items or []))
         try:
-            allowed_name_set = { _normalize_itemname_for_match(nm) for nm in (selected_items or []) }
+            if strict_match:
+                allowed_name_set = { _normalize_itemname_for_match_strict(nm) for nm in (selected_items or []) }
+                df = df[df["_name_norm_strict"].isin(allowed_name_set)]
+            else:
+                allowed_name_set = { _normalize_itemname_for_match(nm) for nm in (selected_items or []) }
+                df = df[df["_name_norm"].isin(allowed_name_set)]
         except Exception:
-            allowed_name_set = set()
-        if allowed_name_set:
-            df = df[df["_name_norm"].isin(allowed_name_set)]
+            pass
 
         _cnt['rows_scanned'] = int(df.shape[0])
 
