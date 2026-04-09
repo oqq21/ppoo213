@@ -6,7 +6,7 @@ BASE_URL = "https://api.mapleland.gg/trade"
 
 # API 쿼리 파라미터 순서
 ORDER = [
-    "itemCode", "itemType", "lowPrice", "highPrice", "lowLevel", "highLevel", "gender", "lowUpgrade", "highUpgrade", "lowTuc", "highTuc", "hapStatsName", "lowHapStatsValue", "highHapStatsValue", "lowincSTR", "highincSTR", "lowincDEX", "highincDEX", "lowincINT", "highincINT", "lowincLUK", "highincLUK", "lowincMAD", "highincMAD", "lowHapma", "highHapma", "lowincACC", "highincACC", "lowincEVA", "highincEVA", "lowincPAD", "highincPAD", "lowincSpeed", "highincSpeed", "lowincJump", "highincJump"]
+    "itemCode", "itemType", "lowPrice", "highPrice", "lowLevel", "highLevel", "gender", "lowUpgrade", "highUpgrade", "lowTuc", "highTuc", "hapStatsName", "lowHapStatsValue", "highHapStatsValue", "lowincSTR", "highincSTR", "lowincDEX", "highincDEX", "lowincINT", "highincINT", "lowincLUK", "highincLUK", "lowincMAD", "highincMAD", "lowincMHP", "highincMHP", "lowHapma", "highHapma", "lowincACC", "highincACC", "lowincEVA", "highincEVA", "lowincPAD", "highincPAD", "lowincSpeed", "highincSpeed", "lowincJump", "highincJump"]
 
 
 

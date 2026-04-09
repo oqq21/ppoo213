@@ -15,7 +15,7 @@ except Exception:  # pragma: no cover
 # 변경: add 스탯 컬럼 11개 추가 (parquet에 이미 계산되어 있음)
 MIN_COLUMNS_FOR_PROCESSOR = [
     "시트명", "A", "B", "C", "D", "E", "F", "I", "날짜(파일명)",
-    "힘_add", "덱_add", "럭_add", "공_add", "마_add",
+    "힘_add", "덱_add", "럭_add", "공_add", "마_add", "피_add",
     "명_add", "회_add", "이속_add", "점프_add", "물방_add", "마방_add",
     "price_history_json",
 ]

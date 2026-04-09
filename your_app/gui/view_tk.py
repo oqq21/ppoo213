@@ -723,8 +723,16 @@ class App:
         d['addMAD'] = d['incMAD'] - d['baseMAD']
 
         keep = pd.Series(True, index=d.index)
+        from your_app.api.client import option_has_any_component, parse_zero_option_token
         for t in (tokens or []):
             t = str(t or "").strip()
+
+            zero_components = parse_zero_option_token(t)
+            if zero_components:
+                opt_col = "optionSummarize" if "optionSummarize" in d.columns else "option"
+                if opt_col in d.columns:
+                    keep &= ~d[opt_col].map(lambda x: option_has_any_component(x, zero_components))
+                continue
 
             m = re.fullmatch(r"신점\s*(\d+)", t)
             if m:

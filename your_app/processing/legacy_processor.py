@@ -47,6 +47,7 @@ STAT_KEYS: Dict[str, str] = {
     "럭": "럭", "LUK": "럭",
     "공": "공", "공격력": "공",
     "마": "마", "마력": "마",
+    "피": "피", "HP": "피", "MHP": "피",
     "명": "명", "명중": "명",
     "회": "회", "회피": "회",
     "이속": "이속",
@@ -56,7 +57,7 @@ STAT_KEYS: Dict[str, str] = {
 }
 
 # 출력 시 고정 순서 (0 제외)
-STAT_ORDER: List[str] = ["힘","덱","인","럭","공","마","명","회","이속","점프","물방","마방"]
+STAT_ORDER: List[str] = ["힘","덱","인","럭","공","마","피","명","회","이속","점프","물방","마방"]
 
 
 def _normalize_itemname_for_match(s: str) -> str:
@@ -150,6 +151,7 @@ COMPOSITE: Dict[str, List[str]] = {
     "도적": ["덱", "럭"],
     "궁수": ["힘", "덱"],        # 가공 정의: 덱+인 → 힘+덱
     "법사": ["인", "럭", "마"],    # 가공 정의: 인+럭+마
+    "단도": ["힘", "덱", "럭"],
 }
 
 # 합산 전용 컬럼 매핑
@@ -158,15 +160,16 @@ _COMPOSITE_MAP = {
     frozenset(["힘","덱"]): "궁수_add",
     frozenset(["인","럭","마"]): "법사_add",
     frozenset(["덱","럭"]): "도적_add",
+    frozenset(["힘","덱","럭"]): "단도_add",
 }
 
 # add 컬럼 키
-_ADD_KEYS = ["힘","덱","인","럭","공","마","명","회","이속","점프","물방","마방"]
+_ADD_KEYS = ["힘","덱","인","럭","공","마","피","명","회","이속","점프","물방","마방"]
 
 
 def _parse_condition(cond: str, base_stats: Dict[str, int]):
     """
-    입력 토큰(예: '전사 20', '인 10', '마 10', '신점 5', '신민 5', '법지 8', '법행 8', '법신 5') ->
+    입력 토큰(예: '전사 20', '단도 10', '피 10', '인 10', '마 10', '신점 5', '신민 5', '법지 8', '법행 8', '법신 5') ->
       - 수치 조건: (keys, target_add)   # target_add는 '추가스탯 합' 목표
       - 후처리 플래그: ('cmp_dex_gte_acc' / 'cmp_acc_gte_dex' / 'cmp_int_gte_luk' / 'cmp_luk_gte_int', None)
 
@@ -344,6 +347,7 @@ def _prepare_sales_df(df: "DataFrame") -> "DataFrame":
     df["궁수_add"] = df["힘_add"] + df["덱_add"]
     df["법사_add"] = df["인_add"] + df["럭_add"] + df["마_add"]
     df["도적_add"] = df["덱_add"] + df["럭_add"]
+    df["단도_add"] = df["힘_add"] + df["덱_add"] + df["럭_add"]
     # date and flags
     try:
         date_raw = df["날짜(파일명)"].astype(str)

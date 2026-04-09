@@ -14,7 +14,7 @@ def register(keys: Iterable[str]):
         return fn
     return deco
 
-@register(["힘","덱","인","럭","공","마","명","회피","물방","마방","HP","MP","이속","점프"])
+@register(["힘","덱","인","럭","공","마","명","회피","물방","마방","HP","피","MP","이속","점프"])
 def handle_simple(raw: str, base: Dict[str,int], sem: Semantics) -> ProcResult:
     import re
     m = re.fullmatch(r"([가-힣A-Za-z]+)\s*([-+]?\d+)", raw.strip())
@@ -29,10 +29,10 @@ def handle_simple(raw: str, base: Dict[str,int], sem: Semantics) -> ProcResult:
     base_val = int(base.get(k, 0) or 0)
     return (([k], v - base_val), None)
 
-@register(["전사","법사","궁수","도적"])
+@register(["전사","법사","궁수","도적","단도"])
 def handle_hap(raw: str, base: Dict[str,int], sem: Semantics) -> ProcResult:
     import re
-    m = re.fullmatch(r"(전사|법사|궁수|도적)\s*(\d+)", raw.strip())
+    m = re.fullmatch(r"(전사|법사|궁수|도적|단도)\s*(\d+)", raw.strip())
     if not m: return (None, None)
     job, v = m.group(1), int(m.group(2))
     comp = {
@@ -40,6 +40,7 @@ def handle_hap(raw: str, base: Dict[str,int], sem: Semantics) -> ProcResult:
         "도적": ["덱","럭"],
         "궁수": ["힘","덱"],
         "법사": ["인","럭","마"],
+        "단도": ["힘","덱","럭"],
     }[job]
     base_sum = sum(int(base.get(x,0) or 0) for x in comp)
     return ((comp, v - base_sum), None)

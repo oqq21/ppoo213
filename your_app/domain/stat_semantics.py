@@ -5,10 +5,10 @@ from typing import Dict, Tuple
 # 단일 진실원천: 스탯/합스탯/비교 규칙
 STAT_FIELD_MAP: Dict[str, str] = {
     "힘":"STR","덱":"DEX","인":"INT","럭":"LUK","공":"PAD","마":"MAD","명":"ACC","회피":"EVA",
-    "물방":"PDD","마방":"MDD","HP":"MHP","MP":"MMP","이속":"Speed","점프":"Jump",
+    "물방":"PDD","마방":"MDD","HP":"MHP","피":"MHP","MP":"MMP","이속":"Speed","점프":"Jump",
 }
 HAP_KEY_MAP: Dict[str, str] = {
-    "전사":"STRDEXACC","법사":"INTLUK","궁수":"STRDEX","도적":"DEXLUK","초보자":""
+    "전사":"STRDEXACC","법사":"INTLUK","궁수":"STRDEX","도적":"DEXLUK","초보자":"","단도":"STRDEXLUK"
 }
 COMPARE_RULES: Dict[str, Tuple[str,str,str]] = {
     "전신": ("INT", ">=", "LUK"),

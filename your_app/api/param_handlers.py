@@ -11,13 +11,13 @@ def register(keys: Iterable[str]):
         return fn
     return deco
 
-@register(["힘","덱","인","럭","공","마","명","회피","물방","마방","HP","MP","이속","점프"])
+@register(["힘","덱","인","럭","공","마","명","회피","물방","마방","HP","피","MP","이속","점프"])
 def build_simple(name: str, value: int, sem: Semantics) -> Dict[str, object]:
     code = sem.stat_field(name)
     if not code: return {}
     return {f"lowinc{code}": value, f"highinc{code}": value}
 
-@register(["전사","법사","궁수","도적","초보자"])
+@register(["전사","법사","궁수","도적","초보자","단도"])
 def build_hap(job: str, value: int, sem: Semantics) -> Dict[str, object]:
     key = sem.hap_key(job) or ""
     return ({"hapStatsName": key, "lowHapStatsValue": value, "highHapStatsValue": value} if key else {})

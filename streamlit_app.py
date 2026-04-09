@@ -15,7 +15,13 @@ if str(BASE_DIR) not in sys.path:
 from your_app.common.data_loader import load_item_data
 from your_app.common.query_utils import mask_for_query
 from your_app.domain.grouping import group_by_sgr
-from your_app.api.client import build_params, fetch_json_with_retries, parse_trade_json
+from your_app.api.client import (
+    build_params,
+    fetch_json_with_retries,
+    option_has_any_component,
+    parse_trade_json,
+    parse_zero_option_token,
+)
 from your_app.processing.legacy_processor import process_items
 from your_app.processing import sales_store
 
@@ -422,6 +428,7 @@ def _queue_apply_history(h: dict) -> None:
         "stat1": tokens[0] if len(tokens) > 0 else "",
         "stat2": tokens[1] if len(tokens) > 1 else "",
         "stat3": tokens[2] if len(tokens) > 2 else "",
+        "reset_pages": True,
     }
     if "api_sell" in h or "proc_rows" in h:
         pending["api_sell"] = h.get("api_sell", pd.DataFrame())
@@ -547,6 +554,13 @@ def _apply_api_post_filters(df: pd.DataFrame, tokens: list[str], current_query: 
     keep = pd.Series(True, index=d.index)
     for t in (tokens or []):
         t = str(t or "").strip()
+
+        zero_components = parse_zero_option_token(t)
+        if zero_components:
+            opt_col = "optionSummarize" if "optionSummarize" in d.columns else "option"
+            if opt_col in d.columns:
+                keep &= ~d[opt_col].map(lambda x: option_has_any_component(x, zero_components))
+            continue
 
         m = re.fullmatch(r"신점\s*(\d+)", t)
         if m:
@@ -709,7 +723,7 @@ st.markdown(
 pending = st.session_state.pop("pending_apply", None)
 if isinstance(pending, dict) and pending:
     for k, v in pending.items():
-        if k in ("api_sell", "api_buy", "proc_rows"):
+        if k in ("api_sell", "api_buy", "proc_rows", "reset_pages"):
             continue
         st.session_state[k] = v
     if pending.get("use_cached"):
@@ -717,6 +731,16 @@ if isinstance(pending, dict) and pending:
         st.session_state["api_buy"] = pending.get("api_buy", pd.DataFrame())
         st.session_state["proc_rows"] = pending.get("proc_rows", [])
         st.session_state["run_now"] = False
+    if pending.get("reset_pages"):
+        st.session_state["proc_page"] = 1
+        st.session_state["page_sell"] = 1
+        st.session_state["page_buy"] = 1
+    try:
+        text, title = _base_stats_from_query(df_items, st.session_state.get("query", ""))
+    except Exception:
+        text, title = "", ""
+    st.session_state["base_stat_text"] = text or ""
+    st.session_state["base_stat_title"] = title or ""
     st.session_state["auto_search"] = True
 
 if st.session_state.get("auto_search"):

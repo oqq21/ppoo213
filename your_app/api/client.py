@@ -8,10 +8,37 @@ from your_app.common.config import HEADERS, BASE_URL, ORDER, SHEET_TO_ITEMTYPE, 
 from your_app.common.hangul_utils import to_choseong, is_choseong_query
 
 _GENDER_MAP = {"남":"남자","남자":"남자","여":"여자","여자":"여자","공용":"공용"}
-HAP_STATS_MAP = {"전사":"STRDEXACC","법사":"INTLUK","궁수":"STRDEX","도적":"DEXLUK","초보자":""}
-_STAT_PREFIX = {"힘":"STR","덱":"DEX","인":"INT","럭":"LUK","공":"PAD","마":"MAD","hp":"MHP",
+HAP_STATS_MAP = {"전사":"STRDEXACC","법사":"INTLUK","궁수":"STRDEX","도적":"DEXLUK","초보자":"","단도":"STRDEXLUK"}
+_STAT_PREFIX = {"힘":"STR","덱":"DEX","인":"INT","럭":"LUK","공":"PAD","마":"MAD","hp":"MHP","HP":"MHP","피":"MHP",
                 "이속":"Speed","점프":"Jump","명":"ACC","회피":"EVA","합마":"hapma"}
 _ALLOWED_COLORS = {"purple","yellow","white","blue","gray"}
+ZERO_OPTION_COMPONENTS = {
+    "힘": ["힘"],
+    "덱": ["덱"],
+    "인": ["인"],
+    "럭": ["럭"],
+    "공": ["공"],
+    "마": ["마"],
+    "명": ["명"],
+    "회": ["회피"],
+    "회피": ["회피"],
+    "물방": ["물방"],
+    "마방": ["마방"],
+    "이속": ["이속"],
+    "점프": ["점프"],
+    "피": ["HP", "피"],
+    "HP": ["HP", "피"],
+    "전사": ["힘", "덱", "명"],
+    "궁수": ["힘", "덱"],
+    "도적": ["덱", "럭"],
+    "법사": ["인", "럭", "마"],
+    "단도": ["힘", "덱", "럭"],
+    "신점": ["힘", "덱", "명"],
+    "신민": ["힘", "덱", "명"],
+    "법지": ["인", "럭", "마"],
+    "법행": ["인", "럭", "마"],
+    "법신": ["인", "럭", "마"],
+}
 
 def normalize_gender(g) -> str:
     """0/1/2 → 남자/여자/생략, 한글 '남자/여자/공용' → '남자/여자/생략'."""
@@ -41,6 +68,57 @@ def infer_gender_from_name(name: str) -> str:
     return {"남":"남자","여":"여자","공용":"공용"}.get(m.group(1),"") if m else ""
 
 
+def parse_zero_option_token(tok: str) -> List[str] | None:
+    tok = (tok or "").strip()
+    if not tok:
+        return None
+    m = re.fullmatch(r"([가-힣A-Za-z]+)\s*0", tok)
+    if not m:
+        return None
+    return ZERO_OPTION_COMPONENTS.get(m.group(1))
+
+
+def _normalize_option_parts(v) -> List[str]:
+    if v is None:
+        return []
+    if isinstance(v, (list, tuple)):
+        return [re.sub(r"\s+", "", str(x or "")) for x in v if str(x or "").strip()]
+    s = str(v).strip()
+    if not s:
+        return []
+    if s.startswith("[") and s.endswith("]"):
+        s = s.strip("[]").replace("'", "").replace('"', "")
+        return [re.sub(r"\s+", "", p) for p in s.split(",") if str(p).strip()]
+    return [re.sub(r"\s+", "", s)]
+
+
+def option_has_component(option_value, component: str) -> bool:
+    component = str(component or "").strip()
+    if not component:
+        return False
+    parts = _normalize_option_parts(option_value)
+    if not parts:
+        return False
+    for part in parts:
+        if component in ("피", "HP"):
+            if part.upper().startswith("HP"):
+                return True
+        elif component == "마":
+            if re.match(r"^마(?!방)", part):
+                return True
+        elif component == "회피":
+            if part.startswith("회피") or part.startswith("회"):
+                return True
+        else:
+            if part.startswith(component):
+                return True
+    return False
+
+
+def option_has_any_component(option_value, components: List[str]) -> bool:
+    return any(option_has_component(option_value, comp) for comp in (components or []))
+
+
 def _find_item_code(sheet: str, item_name: str) -> str:
     """item.xlsx에서 sheet의 itemName으로 itemCode 조회. 실패 시 빈 문자열."""
     try:
@@ -64,6 +142,7 @@ def _find_item_code(sheet: str, item_name: str) -> str:
             nm = str(nm or "")
             for t in ["(남)","(여)","남","여"]:
                 nm = nm.replace(t,"")
+            nm = re.sub(r"[^0-9a-zA-Z가-힣]+", "", nm)
             return nm.strip()
         target = _norm(item_name)
         for row in ws.iter_rows(min_row=2, values_only=True):
@@ -79,20 +158,32 @@ def parse_stat_token(tok: str) -> Dict[str, Any]:
     m_tuc = re.match(r"^(?:업|업횟)\s*(\d+)$", tok)
     if m_tuc:
         v = int(m_tuc.group(1)); return {"lowTuc": v, "highTuc": v}
+    m_dando = re.match(r"단도\s*(\d+)$", tok)
+    if m_dando:
+        v = int(m_dando.group(1))
+        if v == 0:
+            return {}
+        return {"hapStatsName":"STRDEXLUK","lowHapStatsValue":v,"highHapStatsValue":v}
     m_hap = re.match(r"(전사|법사|궁수|도적|초보자)\s*(\d+)$", tok)
     if m_hap:
         cls, v = m_hap.group(1), int(m_hap.group(2))
+        if v == 0:
+            return {}
         name = HAP_STATS_MAP.get(cls,""); 
         return ({"hapStatsName":name,"lowHapStatsValue":v,"highHapStatsValue":v} if name else {})
     # 신점/신민: 전사 n 처리 (서버 hap STRDEXACC)
     m_flag = re.match(r"(신점|신민)\s*(\d+)$", tok)
     if m_flag:
         v = int(m_flag.group(2))
+        if v == 0:
+            return {}
         return {"hapStatsName":"STRDEXACC","lowHapStatsValue":v,"highHapStatsValue":v}
     # 법지/법행: 법사 n 처리 (서버 hap INTLUK)
     m_b = re.match(r"(법지|법행)\s*(\d+)$", tok)
     if m_b:
         v = int(m_b.group(2))
+        if v == 0:
+            return {}
         return {"hapStatsName":"INTLUK","lowHapStatsValue":v,"highHapStatsValue":v}
     # 법신: API 파라미터 없음
     m_lps = re.match(r"법신\s*(\d+)$", tok)
@@ -102,6 +193,8 @@ def parse_stat_token(tok: str) -> Dict[str, Any]:
     if not m: return {}
     key, v = m.group(1).strip(), int(m.group(2))
     pre = _STAT_PREFIX.get(key) or _STAT_PREFIX.get(key.lower()) or _STAT_PREFIX.get(key.upper())
+    if pre and v == 0:
+        return {}
     return ({f"lowinc{pre}": v, f"highinc{pre}": v} if pre else {})
 
 def merge_stat_tokens(tokens: List[str]) -> Dict[str, Any]:
@@ -262,7 +355,9 @@ def parse_trade_json(d: dict) -> dict:
         "incPAD": int((io_ or {}).get("incPAD", 0) or 0),
         "incMAD": int((io_ or {}).get("incMAD", 0) or 0),
         "incACC": int((io_ or {}).get("incACC", 0) or 0),
-        "incJump": int((io_ or {}).get("incJump", 0) or 0)
+        "incJump": int((io_ or {}).get("incJump", 0) or 0),
+        "incMHP": int((io_ or {}).get("incMHP", 0) or 0),
+        "STRDEXLUK": int((io_ or {}).get("STRDEXLUK", 0) or 0),
     }
 
 
