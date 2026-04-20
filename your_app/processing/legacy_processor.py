@@ -169,9 +169,9 @@ _ADD_KEYS = ["힘","덱","인","럭","공","마","피","명","회","이속","점
 
 def _parse_condition(cond: str, base_stats: Dict[str, int]):
     """
-    입력 토큰(예: '전사 20', '단도 10', '피 10', '인 10', '마 10', '신점 5', '신민 5', '법지 8', '법행 8', '법신 5') ->
+    입력 토큰(예: '전사 20', '단도 10', '피 10', '인 10', '마 10', '신점 5', '신민 5', '법지 8', '법행 8', '법신 5', '업 7') ->
       - 수치 조건: (keys, target_add)   # target_add는 '추가스탯 합' 목표
-      - 후처리 플래그: ('cmp_dex_gte_acc' / 'cmp_acc_gte_dex' / 'cmp_int_gte_luk' / 'cmp_luk_gte_int', None)
+      - 후처리 플래그: ('cmp_dex_gte_acc' / 'cmp_acc_gte_dex' / 'cmp_int_gte_luk' / 'cmp_luk_gte_int' / 'tuc_eq', value)
 
     가공 전용 규칙:
       - '인 10' 또는 '마 10' → (인+마) 추가합 = 10 - (기본인+기본마)
@@ -181,6 +181,10 @@ def _parse_condition(cond: str, base_stats: Dict[str, int]):
     if not cond:
         return None, None
     t = cond.strip()
+
+    m = re.fullmatch(r"(?:업|업횟)\s*(\d+)", t)
+    if m:
+        return None, ("tuc_eq", int(m.group(1)))
 
     # 신점/신민/법지/법행/법신
     m = re.fullmatch(r"(신점|신민)\s*(\d+)", t)
@@ -375,6 +379,15 @@ def _duckdb_query_sales(selected_sheet: str, conds: List[Tuple[List[str], int]],
         raise RuntimeError("duckdb path is not set")
 
     avail = sales_store.duckdb_columns() or set(MIN_COLUMNS_FOR_PROCESSOR)
+    tuc_target = post_flags.get("tuc_eq")
+    tuc_col = None
+    if tuc_target is not None:
+        if "업횟" in avail:
+            tuc_col = "업횟"
+        elif "tuc" in avail:
+            tuc_col = "tuc"
+        else:
+            return pd.DataFrame(columns=MIN_COLUMNS_FOR_PROCESSOR)
 
     def _num_expr(col: str) -> str:
         return _q(col) if col in avail else "0"
@@ -384,7 +397,10 @@ def _duckdb_query_sales(selected_sheet: str, conds: List[Tuple[List[str], int]],
             return "0"
         return "''"
 
-    cols = ", ".join(_q(c) if c in avail else f"{_default_expr(c)} AS {_q(c)}" for c in MIN_COLUMNS_FOR_PROCESSOR)
+    select_columns = list(MIN_COLUMNS_FOR_PROCESSOR)
+    if tuc_col and tuc_col not in select_columns:
+        select_columns.append(tuc_col)
+    cols = ", ".join(_q(c) if c in avail else f"{_default_expr(c)} AS {_q(c)}" for c in select_columns)
     sql = f"WITH sales AS (SELECT {cols} FROM read_parquet(?)) SELECT * FROM sales WHERE {_q('시트명')} = ?"
     params: List[Any] = [path, selected_sheet]
 
@@ -406,6 +422,9 @@ def _duckdb_query_sales(selected_sheet: str, conds: List[Tuple[List[str], int]],
         sql += f" AND {_num_expr('마_add')} >= {_num_expr('럭_add')}"
     if post_flags.get("cmp_luk_gte_int"):
         sql += f" AND {_num_expr('럭_add')} >= {_num_expr('마_add')}"
+    if tuc_target is not None:
+        sql += f" AND TRY_CAST({_q(tuc_col)} AS BIGINT) = ?"
+        params.append(int(tuc_target))
 
     return sales_store.duckdb_query(sql, params)
 
@@ -510,6 +529,7 @@ def process_items(
         "cmp_acc_gte_dex": False,
         "cmp_int_gte_luk": False,
         "cmp_luk_gte_int": False,
+        "tuc_eq": None,
     }
     debugger.log('parse_start', input_conditions=input_conditions, base_stats=base_stats)
     for cond in input_conditions:
@@ -521,6 +541,8 @@ def process_items(
             k, _ = flag
             if k in ("cmp_dex_gte_acc","cmp_acc_gte_dex","cmp_int_gte_luk","cmp_luk_gte_int"):
                 post_flags[k] = True
+            elif k == "tuc_eq":
+                post_flags[k] = int(flag[1])
 
     # 3) 판매_데이터 분기
     _cnt = {'rows_scanned':0,'pass_numeric':0,'fail_numeric':0,
@@ -600,6 +622,12 @@ def process_items(
             mask &= (df["마_add"] >= df["럭_add"])
         if post_flags.get("cmp_luk_gte_int"):
             mask &= (df["럭_add"] >= df["마_add"])
+        if post_flags.get("tuc_eq") is not None:
+            tuc_col = "업횟" if "업횟" in df.columns else ("tuc" if "tuc" in df.columns else None)
+            if tuc_col is None:
+                mask &= False
+            else:
+                mask &= pd.to_numeric(df[tuc_col], errors="coerce").eq(int(post_flags["tuc_eq"]))
 
         df = df[mask].copy()
 
@@ -714,6 +742,8 @@ def process_items(
             if post_flags["cmp_int_gte_luk"] and not (int(add_stats.get("마",0) or 0) >= int(add_stats.get("럭",0) or 0)):
                 continue
             if post_flags["cmp_luk_gte_int"] and not (int(add_stats.get("럭",0) or 0) >= int(add_stats.get("마",0) or 0)):
+                continue
+            if post_flags.get("tuc_eq") is not None:
                 continue
 
             rows.append({

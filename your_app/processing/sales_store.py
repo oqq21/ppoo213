@@ -18,6 +18,7 @@ MIN_COLUMNS_FOR_PROCESSOR = [
     "힘_add", "덱_add", "럭_add", "공_add", "마_add", "피_add",
     "명_add", "회_add", "이속_add", "점프_add", "물방_add", "마방_add",
     "price_history_json",
+    "업횟",
 ]
 
 _cache_df: Optional[pd.DataFrame] = None
