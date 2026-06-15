@@ -155,20 +155,21 @@ def _emph_price(v) -> str:
     return s
 
 
-MY_PROFILE_IDS = {
-    "58656317-8ca3-4bde-be58-8052dd6870a8",
-    "b7b9d9a7-ba69-487a-8647-9b8324941767",
-    "127f4132-0e9a-47b1-aa7e-d99b3186af5b",
-    "6ddf963d-186c-45a9-9562-ff01ba0b13c4",
-    "64091862-a78f-4627-8c8e-6dcef0e17a5f",
-    "d1c30b32-e211-4a4a-b23a-455a61c93370",
-    "4a0243f2-b679-44b7-91a1-efc4a9e1e83a",
-    "abbf6597-5ed8-4016-99ed-7225ee81b779",
-    "aa3d07db-6722-48b2-b6a7-989f8391f500",
-    "612c4dd5-4813-4080-9133-db980a727188",
-    "4406877c-c9e5-4d5b-85a9-4e5c8261d611",
+MY_PROFILE_ORDER = {
+    "58656317-8ca3-4bde-be58-8052dd6870a8": 1,
+    "b7b9d9a7-ba69-487a-8647-9b8324941767": 2,
+    "127f4132-0e9a-47b1-aa7e-d99b3186af5b": 3,
+    "6ddf963d-186c-45a9-9562-ff01ba0b13c4": 4,
+    "64091862-a78f-4627-8c8e-6dcef0e17a5f": 5,
+    "d1c30b32-e211-4a4a-b23a-455a61c93370": 6,
+    "4a0243f2-b679-44b7-91a1-efc4a9e1e83a": 7,
+    "abbf6597-5ed8-4016-99ed-7225ee81b779": 8,
+    "aa3d07db-6722-48b2-b6a7-989f8391f500": 9,
+    "4406877c-c9e5-4d5b-85a9-4e5c8261d611": 10,
+    "6415c3f1-d86c-494b-985f-2930c4ea7728": 11,
+    "612c4dd5-4813-4080-9133-db980a727188": 12,
 }
-MY_ACCOUNT_MARK = "🔴🔴🔴"
+MY_ACCOUNT_DOT = "🔴"
 
 
 def _profile_id_from_url(v) -> str:
@@ -184,7 +185,12 @@ def _profile_id_from_url(v) -> str:
 
 
 def _is_my_profile_url(v) -> bool:
-    return _profile_id_from_url(v) in MY_PROFILE_IDS
+    return _profile_id_from_url(v) in MY_PROFILE_ORDER
+
+
+def _my_account_mark(v) -> str:
+    n = MY_PROFILE_ORDER.get(_profile_id_from_url(v))
+    return f"{MY_ACCOUNT_DOT}{n}{MY_ACCOUNT_DOT}" if n else ""
 
 
 def _normalize_option(v) -> str:
@@ -299,7 +305,8 @@ def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
 
     def _api_color_cell(row):
         base = _color_dot(row.get("color", ""))
-        return f"{base} {MY_ACCOUNT_MARK}" if bool(row.get("_is_my_account")) else base
+        mark = _my_account_mark(row.get("profileUrl", ""))
+        return f"{base} {mark}" if mark else base
 
     out = pd.DataFrame({
         "색": d.apply(_api_color_cell, axis=1),
@@ -322,15 +329,14 @@ def _proc_view_df(rows: list[dict]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
-    is_my = df.get("url", "").map(_is_my_profile_url) if "url" in df.columns else False
     status = (
         df.get("highlight", "").map(lambda x: "🟢 판매중" if bool(x) else "⚫ 판매완료")
         if "highlight" in df.columns
         else pd.Series([""] * len(df), index=df.index)
     )
     status = [
-        f"{s} {MY_ACCOUNT_MARK}" if mine else s
-        for s, mine in zip(status, is_my)
+        f"{s} {mark}" if mark else s
+        for s, mark in zip(status, df.get("url", "").map(_my_account_mark) if "url" in df.columns else [""] * len(df))
     ]
     out = pd.DataFrame({
         "일전": df.get("days_ago", ""),
@@ -984,7 +990,7 @@ if include_api:
     view = _api_view_df(src, "price" if api_sort == "가격순" else "time")
     if api_sort == "가격순" and "가격(만)" in view.columns:
         view["_sort_price"] = view["가격(만)"].map(_price_to_number).fillna(0)
-        view["_sort_my"] = view.get("색", "").astype(str).str.contains(MY_ACCOUNT_MARK, regex=False)
+        view["_sort_my"] = view.get("색", "").astype(str).str.contains(MY_ACCOUNT_DOT, regex=False)
         view = view.sort_values(
             ["_sort_my", "_sort_price"],
             ascending=[False, True],
