@@ -155,6 +155,38 @@ def _emph_price(v) -> str:
     return s
 
 
+MY_PROFILE_IDS = {
+    "58656317-8ca3-4bde-be58-8052dd6870a8",
+    "b7b9d9a7-ba69-487a-8647-9b8324941767",
+    "127f4132-0e9a-47b1-aa7e-d99b3186af5b",
+    "6ddf963d-186c-45a9-9562-ff01ba0b13c4",
+    "64091862-a78f-4627-8c8e-6dcef0e17a5f",
+    "d1c30b32-e211-4a4a-b23a-455a61c93370",
+    "4a0243f2-b679-44b7-91a1-efc4a9e1e83a",
+    "abbf6597-5ed8-4016-99ed-7225ee81b779",
+    "aa3d07db-6722-48b2-b6a7-989f8391f500",
+    "612c4dd5-4813-4080-9133-db980a727188",
+    "4406877c-c9e5-4d5b-85a9-4e5c8261d611",
+}
+MY_ACCOUNT_MARK = "🔴🔴🔴"
+
+
+def _profile_id_from_url(v) -> str:
+    s = str(v or "").strip().rstrip("/")
+    if not s:
+        return ""
+    m = re.search(r"/profile/([0-9a-fA-F-]{36})", s)
+    if m:
+        return m.group(1).lower()
+    if re.fullmatch(r"[0-9a-fA-F-]{36}", s):
+        return s.lower()
+    return ""
+
+
+def _is_my_profile_url(v) -> bool:
+    return _profile_id_from_url(v) in MY_PROFILE_IDS
+
+
 def _normalize_option(v) -> str:
     if v is None:
         return ""
@@ -241,12 +273,23 @@ def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     d = df.copy()
+    d["_load_order"] = range(len(d))
+    d["_is_my_account"] = d.get("profileUrl", "").map(_is_my_profile_url) if "profileUrl" in d.columns else False
+    d["_price_sort"] = d.get("itemPrice", "").map(_price_to_number).fillna(10**18) if "itemPrice" in d.columns else 10**18
     if sort_key == "price" and "itemPrice" in d.columns:
-        d["_sort"] = d["itemPrice"].map(_price_to_number).fillna(0)
-        d = d.sort_values("_sort", ascending=True, kind="mergesort").reset_index(drop=True)
+        d["_sort"] = d["_price_sort"]
+        d = d.sort_values(
+            ["_is_my_account", "_sort", "_load_order"],
+            ascending=[False, True, True],
+            kind="mergesort",
+        ).reset_index(drop=True)
     elif "updated_at" in d.columns:
         d["_sort"] = pd.to_datetime(d["updated_at"], errors="coerce")
-        d = d.sort_values("_sort", ascending=False, kind="mergesort").reset_index(drop=True)
+        d = d.sort_values(
+            ["_is_my_account", "_price_sort", "_sort", "_load_order"],
+            ascending=[False, True, False, True],
+            kind="mergesort",
+        ).reset_index(drop=True)
     d = d.drop(columns=["_sort"], errors="ignore")
 
     opt_col = "optionSummarize" if "optionSummarize" in d.columns else "option"
@@ -254,8 +297,12 @@ def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
         m = {"purple": "🟣", "yellow": "🟡", "blue": "🔵", "gray": "⚪", "white": "⚪"}
         return m.get(str(v or "").lower(), "⚪")
 
+    def _api_color_cell(row):
+        base = _color_dot(row.get("color", ""))
+        return f"{base} {MY_ACCOUNT_MARK}" if bool(row.get("_is_my_account")) else base
+
     out = pd.DataFrame({
-        "색": d.get("color", "").map(_color_dot) if "color" in d.columns else "",
+        "색": d.apply(_api_color_cell, axis=1),
         "상태": d.get("tradeStatus", "").map(lambda x: "🟢 판매중" if bool(x) else "⚫ 판매완료") if "tradeStatus" in d.columns else "",
         "아이템": d.get("itemName", ""),
         "가격(만)": d.get("itemPrice", "").map(_emph_price) if "itemPrice" in d.columns else "",
@@ -275,9 +322,19 @@ def _proc_view_df(rows: list[dict]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
+    is_my = df.get("url", "").map(_is_my_profile_url) if "url" in df.columns else False
+    status = (
+        df.get("highlight", "").map(lambda x: "🟢 판매중" if bool(x) else "⚫ 판매완료")
+        if "highlight" in df.columns
+        else pd.Series([""] * len(df), index=df.index)
+    )
+    status = [
+        f"{s} {MY_ACCOUNT_MARK}" if mine else s
+        for s, mine in zip(status, is_my)
+    ]
     out = pd.DataFrame({
         "일전": df.get("days_ago", ""),
-        "상태": df.get("highlight", "").map(lambda x: "🟢 판매중" if bool(x) else "⚫ 판매완료") if "highlight" in df.columns else "",
+        "상태": status,
         "아이템": df.get("item", ""),
         "가격(만)": df.get("price", "").map(_emph_price) if "price" in df.columns else "",
         "판매자": df.get("seller", ""),
@@ -927,7 +984,12 @@ if include_api:
     view = _api_view_df(src, "price" if api_sort == "가격순" else "time")
     if api_sort == "가격순" and "가격(만)" in view.columns:
         view["_sort_price"] = view["가격(만)"].map(_price_to_number).fillna(0)
-        view = view.sort_values("_sort_price", ascending=True, kind="mergesort").drop(columns=["_sort_price"], errors="ignore").reset_index(drop=True)
+        view["_sort_my"] = view.get("색", "").astype(str).str.contains(MY_ACCOUNT_MARK, regex=False)
+        view = view.sort_values(
+            ["_sort_my", "_sort_price"],
+            ascending=[False, True],
+            kind="mergesort",
+        ).drop(columns=["_sort_my", "_sort_price"], errors="ignore").reset_index(drop=True)
         st.session_state["api_render_id"] = st.session_state.get("api_render_id", 0) + 1
     page_key = "page_sell" if api_kind == "판매" else "page_buy"
     page = st.session_state.get(page_key, 1)
@@ -952,7 +1014,7 @@ if include_api:
         height=300,
         key=f"api_df_{api_kind}_{api_sort}_{st.session_state.get('api_render_id', 0)}",
         column_config={
-            "색": st.column_config.Column("색", width="small"),
+            "색": st.column_config.Column("색", width="medium"),
             "상태": st.column_config.Column("상태", width="small"),
             "스탯": st.column_config.Column("스탯", width="large"),
             "코멘트": st.column_config.Column("코멘트", width="medium"),
