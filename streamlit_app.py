@@ -1014,7 +1014,7 @@ if include_api:
         height=300,
         key=f"api_df_{api_kind}_{api_sort}_{st.session_state.get('api_render_id', 0)}",
         column_config={
-            "색": st.column_config.Column("색", width="medium"),
+            "색": st.column_config.Column("색", width="small"),
             "상태": st.column_config.Column("상태", width="small"),
             "스탯": st.column_config.Column("스탯", width="large"),
             "코멘트": st.column_config.Column("코멘트", width="medium"),
