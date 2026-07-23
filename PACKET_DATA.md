@@ -13,6 +13,30 @@ python build_packet_web_data.py
 - `packet_completed.parquet`
 - `item.xlsx`
 
+## 웹 데이터 게시
+
+Parquet는 `main` 브랜치에 커밋하지 않습니다. 다음 명령은
+`요약본.parquet`, `packet_active.parquet`, `packet_completed.parquet`를
+`data-latest` 브랜치의 단일 스냅샷으로 교체합니다.
+
+```powershell
+python publish_data_snapshot.py
+```
+
+원본 위치를 직접 지정할 수도 있습니다.
+
+```powershell
+python publish_data_snapshot.py `
+  --summary "..\요약본.parquet" `
+  --active "..\ppoo213_work\packet_active.parquet" `
+  --completed "..\ppoo213_work\packet_completed.parquet"
+```
+
+- 세 파일의 내용이 같으면 게시를 건너뜁니다.
+- 변경되면 이전 브랜치 이력과 연결되지 않은 최신 스냅샷 한 개로 교체합니다.
+- Streamlit 앱은 manifest를 60초마다 확인하고 새 버전을 원자적으로 내려받습니다.
+- 기존 `publish_parquet.py`를 실행해도 같은 게시기가 호출됩니다.
+
 기본 입력 경로는 저장소의 상위 폴더입니다. 다른 위치라면
 `--itemp`, `--gem-prices`, `--active-db`, `--completed-db`,
 `--output-dir` 인수를 지정할 수 있습니다.

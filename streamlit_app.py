@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import html
+import tempfile
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
@@ -25,10 +26,13 @@ from your_app.api.client import (
 from your_app.processing.legacy_processor import process_items
 from your_app.processing import sales_store
 from your_app.processing.packet_store import packet_view, search_packet_data
+from your_app.common.remote_data import ensure_data_snapshot
 
+APP_BUILD = "2026-07-24-data-latest-v1"
 PREFERRED_PARQUET = ["요약본.parquet"]
-PACKET_ACTIVE_FILE = BASE_DIR / "packet_active.parquet"
-PACKET_COMPLETED_FILE = BASE_DIR / "packet_completed.parquet"
+DATA_CACHE_DIR = Path(tempfile.gettempdir()) / "ppoo213-data"
+PACKET_ACTIVE_FILE = DATA_CACHE_DIR / "packet_active.parquet"
+PACKET_COMPLETED_FILE = DATA_CACHE_DIR / "packet_completed.parquet"
 
 
 def _find_sales_file(base_dir: Path) -> Optional[Path]:
@@ -45,7 +49,7 @@ def _load_items(excel_path: str) -> pd.DataFrame:
 
 
 @st.cache_resource
-def _init_sales_backend(sales_path: str) -> str:
+def _init_sales_backend(sales_path: str, data_version: str) -> str:
     if sales_store.duckdb_available():
         sales_store.preload_sales_duckdb(sales_path)
         return "duckdb"
@@ -927,17 +931,41 @@ st.markdown(
 )
 
 excel_file = BASE_DIR / "item.xlsx"
-sales_file = _find_sales_file(BASE_DIR)
+try:
+    data_snapshot = ensure_data_snapshot(DATA_CACHE_DIR, check_interval=60)
+except Exception as exc:
+    st.error(f"최신 데이터 스냅샷을 받지 못했습니다: {exc}")
+    st.stop()
+
+sales_file = _find_sales_file(data_snapshot.directory)
+PACKET_ACTIVE_FILE = data_snapshot.path("packet_active.parquet")
+PACKET_COMPLETED_FILE = data_snapshot.path("packet_completed.parquet")
 
 if not excel_file.exists():
     st.error("item.xlsx 파일이 없습니다. 먼저 업로드/배치해주세요.")
     st.stop()
 if not sales_file:
-    st.error("parquet 파일을 찾을 수 없습니다. (sales_10000.parquet / 요약본.parquet / data.parquet)")
+    st.error("data-latest에서 요약본.parquet를 찾을 수 없습니다.")
     st.stop()
 
-mode = _init_sales_backend(str(sales_file))
+mode = _init_sales_backend(str(sales_file), data_snapshot.version)
 df_items = _load_items(str(excel_file))
+
+
+def _watch_remote_data() -> None:
+    try:
+        latest = ensure_data_snapshot(DATA_CACHE_DIR, check_interval=60)
+    except Exception:
+        return
+    if latest.version == data_snapshot.version:
+        return
+    st.session_state["run_now"] = True
+    st.session_state["auto_search"] = True
+    st.rerun()
+
+
+if hasattr(st, "fragment"):
+    st.fragment(run_every="60s")(_watch_remote_data)()
 
 
 def _on_query_change() -> None:
@@ -957,6 +985,7 @@ mtime_text = _format_mtime(sales_file)
 ctime_text = _format_ctime(sales_file)
 st.markdown(
     f"<div style='text-align:right;font-size:11px;color:#555;'>"
+    f"build: {APP_BUILD} · data: {data_snapshot.version[:10]} · "
     f"parquet 생성일: {ctime_text} · 최종수정: {mtime_text} · backend: {mode}"
     f"</div>",
     unsafe_allow_html=True,

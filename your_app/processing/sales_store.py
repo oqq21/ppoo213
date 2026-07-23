@@ -52,6 +52,11 @@ def preload_sales_duckdb(path: str) -> None:
     # reuse connection if same path
     if _duckdb_con is not None and _duckdb_path == ap:
         return
+    if _duckdb_con is not None:
+        try:
+            _duckdb_con.close()
+        except Exception:
+            pass
     con = duckdb.connect(database=":memory:")
     _duckdb_path = ap
     # Fetch schema without loading full data.

@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+.data_cache/
+요약본.parquet
+packet_active.parquet
+packet_completed.parquet
