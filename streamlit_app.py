@@ -169,6 +169,28 @@ def _emph_price(v) -> str:
     return s
 
 
+def _style_status_rows(frame: pd.DataFrame):
+    """상태를 색과 배경으로 빠르게 구분할 수 있게 한다."""
+    if frame is None or frame.empty or "상태" not in frame.columns:
+        return frame
+
+    def _row_style(row: pd.Series) -> list[str]:
+        status = str(row.get("상태", ""))
+        if "Active" in status:
+            style = "background-color: #e8f2ff; color: #123b67;"
+        elif "Completed" in status:
+            style = "background-color: #f3e9ff; color: #51247a;"
+        elif "판매중" in status:
+            style = "background-color: #e9f8ef; color: #155d34;"
+        elif "판매완료" in status:
+            style = "background-color: #f2f2f2; color: #666666;"
+        else:
+            style = ""
+        return [style] * len(row)
+
+    return frame.style.apply(_row_style, axis=1)
+
+
 MY_PROFILE_ORDER = {
     "58656317-8ca3-4bde-be58-8052dd6870a8": 1,
     "b7b9d9a7-ba69-487a-8647-9b8324941767": 2,
@@ -879,6 +901,17 @@ st.markdown(
       .link-btn.disabled { color: #888; background: #f2f2f2; border-color: #ddd; }
       .base-stat { font-size: 15px; font-weight: 700; color: #000; line-height: 1.3; }
       .base-stat-empty { font-size: 11px; font-weight: 700; color: #000; }
+      .stTabs [data-baseweb="tab-list"] { gap: 6px; }
+      .stTabs [data-baseweb="tab"] {
+        background: #e7e9f7;
+        border-radius: 7px 7px 0 0;
+        padding: 7px 18px;
+        font-weight: 700;
+      }
+      .stTabs [aria-selected="true"] {
+        background: #5b6fe5 !important;
+        color: white !important;
+      }
       div[data-testid="stDataFrame"] table tbody tr td:nth-child(4) { font-weight: 700; }
       div[data-testid="stDataFrame"] thead tr th { pointer-events: none; }
       div[data-testid="stDataFrame"] thead { cursor: default; }
@@ -939,6 +972,7 @@ if isinstance(pending, dict) and pending:
         st.session_state["proc_page"] = 1
         st.session_state["page_sell"] = 1
         st.session_state["page_buy"] = 1
+        st.session_state["page_parquet"] = 1
     try:
         text, title = _base_stats_from_query(df_items, st.session_state.get("query", ""))
     except Exception:
@@ -1028,38 +1062,42 @@ with col_left:
                     st.rerun()
 
 with col_right:
-    packet_header = st.columns([2, 2, 5])
-    packet_header[0].caption("패킷 Active / Completed")
-    completed_only = packet_header[1].toggle("Completed만 보기", key="packet_completed_only")
-    packet_rows = st.session_state.get("packet_rows", pd.DataFrame())
-    packet_dedup = int(st.session_state.get("packet_dedup_count", 0) or 0)
-    packet_header[2].caption(f"중복 Active 제외 {packet_dedup:,}건")
+    sell_tab, buy_tab, parquet_tab = st.tabs(["🟢 판매 API", "🔵 구매 API", "🟣 Parquet"])
 
-    if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
-        visible_packet = packet_rows.copy()
-        if completed_only:
-            visible_packet = visible_packet[visible_packet["status"].eq("completed")].copy()
-        visible_packet["_sort_time"] = pd.to_datetime(visible_packet["event_time"], errors="coerce")
-        visible_packet = visible_packet.sort_values("_sort_time", ascending=False).drop(columns="_sort_time")
-        view = packet_view(visible_packet)
-        st.dataframe(
-            view,
-            use_container_width=True,
-            hide_index=True,
-            height=420,
-            column_config={
-                "판매가": st.column_config.NumberColumn("판매가", format="localized"),
-                "보석비(원가)": st.column_config.NumberColumn("보석비(원가)", format="localized"),
-                "인정보석가치(90%)": st.column_config.NumberColumn("인정보석가치(90%)", format="localized"),
-                "찐판매가": st.column_config.NumberColumn("찐판매가", format="localized"),
-                "추가스탯": st.column_config.Column("추가스탯", width="large"),
-                "총스탯": st.column_config.Column("총스탯", width="large"),
-            },
-        )
-    elif PACKET_ACTIVE_FILE.exists() or PACKET_COMPLETED_FILE.exists():
-        st.info("조건에 맞는 패킷 장비가 없습니다.")
-    else:
-        st.info("packet_active.parquet / packet_completed.parquet를 생성하면 패킷 매물이 표시됩니다.")
+    market_specs = [
+        (sell_tab, _api_view_df(st.session_state.get("api_sell", pd.DataFrame()), "time"), "page_sell", "sell"),
+        (buy_tab, _api_view_df(st.session_state.get("api_buy", pd.DataFrame()), "time"), "page_buy", "buy"),
+        (parquet_tab, _proc_view_df(st.session_state.get("proc_rows", [])), "page_parquet", "parquet"),
+    ]
+    for tab, market_view, page_key, key_prefix in market_specs:
+        with tab:
+            page = st.session_state.get(page_key, 1)
+            page_view, page, pages, total = _paginate_df(market_view, page, 10)
+            st.session_state[page_key] = page
+            nav = st.columns([0.7, 0.7, 2, 7])
+            if nav[0].button("◀", key=f"{key_prefix}_prev", type="primary") and page > 1:
+                st.session_state[page_key] = page - 1
+                st.rerun()
+            if nav[1].button("▶", key=f"{key_prefix}_next", type="primary") and pages and page < pages:
+                st.session_state[page_key] = page + 1
+                st.rerun()
+            nav[2].caption(f"{page}/{pages} · 총 {total}")
+            st.dataframe(
+                _style_status_rows(page_view),
+                use_container_width=True,
+                hide_index=True,
+                height=385,
+                key=f"market_df_{key_prefix}_{st.session_state.get('api_render_id', 0)}",
+                column_config={
+                    "색": st.column_config.Column("색", width="small"),
+                    "상태": st.column_config.Column("상태", width="small"),
+                    "스탯": st.column_config.Column("스탯", width="large"),
+                    "가격(만)": st.column_config.Column("가격(만)", width="small"),
+                    "코멘트": st.column_config.Column("코멘트", width="medium"),
+                    "프로필": st.column_config.LinkColumn("프로필", display_text="열기", width="small"),
+                    "링크": st.column_config.LinkColumn("링크", display_text="열기", width="small"),
+                },
+            )
 
 groups = st.session_state.get("groups")
 if groups is not None and not groups.empty:
@@ -1116,6 +1154,7 @@ if groups is not None and not groups.empty:
         st.session_state["proc_page"] = 1
         st.session_state["page_sell"] = 1
         st.session_state["page_buy"] = 1
+        st.session_state["page_parquet"] = 1
         _save_history_snapshot(
             st.session_state.get("query", ""),
             tokens,
@@ -1127,59 +1166,40 @@ if groups is not None and not groups.empty:
         st.session_state["run_now"] = False
         st.rerun()
 
-api_sell = st.session_state.get("api_sell", pd.DataFrame())
-api_buy = st.session_state.get("api_buy", pd.DataFrame())
+packet_header = st.columns([1.4, 1.6, 3, 5])
+packet_header[0].markdown("### 패킷 매물")
+completed_only = packet_header[1].toggle("Completed만 보기", key="packet_completed_only")
+packet_rows = st.session_state.get("packet_rows", pd.DataFrame())
+packet_dedup = int(st.session_state.get("packet_dedup_count", 0) or 0)
+packet_header[2].caption(f"중복 Active 제외 {packet_dedup:,}건")
+packet_header[3].caption("Active 날짜: 패킷 수집시각 · Completed 날짜: 완료 데이터 시각")
 
-if include_api:
-    top = st.columns([1.8, 6])
-    with top[0]:
-        market_kind = st.radio(
-            "구분",
-            ["판매 통합", "구매 API"],
-            horizontal=True,
-            key="market_kind",
-            label_visibility="collapsed",
-        )
-    top[1].caption("판매 통합은 API를 먼저 표시하며, 동일 매물은 API만 남깁니다.")
-
-    if market_kind == "판매 통합":
-        view = _combined_market_rows(api_sell, st.session_state.get("proc_rows", []), df_items)
-        page_key = "page_sell"
-    else:
-        view = _api_view_df(api_buy, "time")
-        page_key = "page_buy"
-    page = st.session_state.get(page_key, 1)
-    page_view, page, pages, total = _paginate_df(view, page, 12)
-    st.session_state[page_key] = page
-
-    nav = st.columns([0.6, 0.6, 2, 8])
-    prev_key = "sell_prev" if market_kind == "판매 통합" else "buy_prev"
-    next_key = "sell_next" if market_kind == "판매 통합" else "buy_next"
-    if nav[0].button("◀", key=prev_key, type="primary") and page > 1:
-        st.session_state[page_key] = page - 1
-        st.rerun()
-    if nav[1].button("▶", key=next_key, type="primary") and pages and page < pages:
-        st.session_state[page_key] = page + 1
-        st.rerun()
-    nav[2].caption(f"{page}/{pages} · 총 {total}")
-
+if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
+    visible_packet = packet_rows.copy()
+    if completed_only:
+        visible_packet = visible_packet[visible_packet["status"].eq("completed")].copy()
+    visible_packet["_sort_time"] = pd.to_datetime(visible_packet["event_time"], errors="coerce")
+    visible_packet = visible_packet.sort_values("_sort_time", ascending=False).drop(columns="_sort_time")
+    view = packet_view(visible_packet)
     st.dataframe(
-        page_view,
+        _style_status_rows(view),
         use_container_width=True,
         hide_index=True,
         height=440,
-        key=f"market_df_{market_kind}_{st.session_state.get('api_render_id', 0)}",
         column_config={
-            "색": st.column_config.Column("색", width="small"),
-            "출처": st.column_config.Column("출처", width="small"),
             "상태": st.column_config.Column("상태", width="small"),
-            "스탯": st.column_config.Column("스탯", width="large"),
-            "가격": st.column_config.NumberColumn("가격", format="localized"),
-            "코멘트": st.column_config.Column("코멘트", width="medium"),
-            "프로필": st.column_config.LinkColumn("프로필", display_text="열기", width="small"),
-            "링크": st.column_config.LinkColumn("링크", display_text="열기", width="small"),
+            "판매가(만)": st.column_config.NumberColumn("판매가(만)", format="localized"),
+            "보석비(원가, 만)": st.column_config.NumberColumn("보석비(원가, 만)", format="localized"),
+            "인정보석가치(90%, 만)": st.column_config.NumberColumn("인정보석가치(90%, 만)", format="localized"),
+            "찐판매가(만)": st.column_config.NumberColumn("찐판매가(만)", format="localized"),
+            "추가스탯": st.column_config.Column("추가스탯", width="large"),
+            "총스탯": st.column_config.Column("총스탯", width="large"),
         },
     )
+elif PACKET_ACTIVE_FILE.exists() or PACKET_COMPLETED_FILE.exists():
+    st.info("조건에 맞는 패킷 장비가 없습니다.")
+else:
+    st.info("packet_active.parquet / packet_completed.parquet를 생성하면 패킷 매물이 표시됩니다.")
 
 if groups is None:
     st.info("검색어를 입력하고 검색 버튼을 눌러주세요.")

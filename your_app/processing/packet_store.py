@@ -255,15 +255,24 @@ def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame()
     work = frame.copy()
+
+    def _to_man(column: str) -> pd.Series:
+        # 가격은 양수 메소 단위이므로 5천 메소 이상을 올리는 일반적인 만원 반올림.
+        values = _numeric(work, column).clip(lower=0)
+        return ((values + 5_000) // 10_000).astype("int64")
+
     return pd.DataFrame({
-        "상태": work["status"].map({"active": "Active", "completed": "Completed"}).fillna(work["status"]),
+        "상태": work["status"].map({
+            "active": "🔵 Active",
+            "completed": "🟣 Completed",
+        }).fillna(work["status"]),
         "날짜": pd.to_datetime(work["event_time"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M"),
         "아이템": work["itemName"],
-        "판매가": _numeric(work, "unit_price"),
+        "판매가(만)": _to_man("unit_price"),
         "보석": work.get("gem_options", ""),
-        "보석비(원가)": _numeric(work, "gem_cost"),
-        "인정보석가치(90%)": _numeric(work, "recognized_gem_value"),
-        "찐판매가": _numeric(work, "true_price"),
+        "보석비(원가, 만)": _to_man("gem_cost"),
+        "인정보석가치(90%, 만)": _to_man("recognized_gem_value"),
+        "찐판매가(만)": _to_man("true_price"),
         "업횟": _numeric(work, "total_upgrade_left"),
         "작횟": _numeric(work, "total_work_count"),
         "추가스탯": work.apply(lambda row: format_stat_text(row, "add"), axis=1),

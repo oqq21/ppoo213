@@ -9,6 +9,7 @@ from your_app.processing.packet_store import (
     ACTUAL_STATS,
     deduplicate_active_completed,
     filter_packet_rows,
+    packet_view,
     search_packet_data,
 )
 
@@ -67,6 +68,23 @@ class PacketRuleTests(unittest.TestCase):
         ])
         result = filter_packet_rows(frame, ["힘0"])
         self.assertEqual(result["itemCode"].tolist(), [1_000_001])
+
+    def test_packet_view_rounds_prices_to_man_and_colors_status(self):
+        frame = pd.DataFrame([
+            sample_row(
+                unit_price=10_005_000,
+                gem_cost=2_254_999,
+                recognized_gem_value=2_029_499,
+                true_price=7_975_501,
+                gem_options="",
+            )
+        ])
+        result = packet_view(frame)
+        self.assertEqual(result.at[0, "상태"], "🔵 Active")
+        self.assertEqual(result.at[0, "판매가(만)"], 1_001)
+        self.assertEqual(result.at[0, "보석비(원가, 만)"], 225)
+        self.assertEqual(result.at[0, "인정보석가치(90%, 만)"], 203)
+        self.assertEqual(result.at[0, "찐판매가(만)"], 798)
 
     def test_completed_removes_matching_active_within_three_days(self):
         active = pd.DataFrame([sample_row()])

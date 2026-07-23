@@ -39,6 +39,14 @@ python build_packet_web_data.py
 
 등급별 가공비는 하급 75만, 중급 150만, 상급 225만입니다.
 
+웹 화면에서는 모든 가격을 10,000 메소 단위로 반올림해 `(만)` 열로 표시합니다.
+
+## 날짜
+
+- Active: 패킷을 실제로 수집한 `packet_time`(KST)
+- Completed: 완료 행 내부의 거래 완료시각(KST)
+- 두 파일 모두 중복 판별용 패킷 수집시각 `captured_at`을 별도로 보존합니다.
+
 ## Active/Completed 중복
 
 다음 값이 같고 Active 수집 후 3일 안에 Completed가 있으면
