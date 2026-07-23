@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -183,8 +184,8 @@ def deduplicate_active_completed(
 
     active_work = active.copy().reset_index(drop=True)
     completed_work = completed.copy().reset_index(drop=True)
-    active_work["_capture_date"] = pd.to_datetime(active_work["captured_at"], errors="coerce").dt.date
-    completed_work["_capture_date"] = pd.to_datetime(completed_work["captured_at"], errors="coerce").dt.date
+    active_work["_internal_date"] = pd.to_datetime(active_work["internal_time"], errors="coerce").dt.date
+    completed_work["_internal_date"] = pd.to_datetime(completed_work["internal_time"], errors="coerce").dt.date
 
     active_groups: dict[tuple, list[int]] = defaultdict(list)
     completed_groups: dict[tuple, list[int]] = defaultdict(list)
@@ -197,24 +198,34 @@ def deduplicate_active_completed(
     for fingerprint, completed_indexes in completed_groups.items():
         available = sorted(
             active_groups.get(fingerprint, []),
-            key=lambda index: active_work.at[index, "_capture_date"],
+            key=lambda index: (
+                date.min
+                if pd.isna(active_work.at[index, "_internal_date"])
+                else active_work.at[index, "_internal_date"]
+            ),
         )
         if not available:
             continue
         for completed_index in sorted(
             completed_indexes,
-            key=lambda index: completed_work.at[index, "_capture_date"],
+            key=lambda index: (
+                date.min
+                if pd.isna(completed_work.at[index, "_internal_date"])
+                else completed_work.at[index, "_internal_date"]
+            ),
         ):
-            completed_date = completed_work.at[completed_index, "_capture_date"]
+            completed_date = completed_work.at[completed_index, "_internal_date"]
             if pd.isna(completed_date):
                 continue
             chosen = None
             for position in range(len(available) - 1, -1, -1):
-                active_date = active_work.at[available[position], "_capture_date"]
+                active_date = active_work.at[available[position], "_internal_date"]
                 if pd.isna(active_date):
                     continue
-                gap = (completed_date - active_date).days
-                if 0 <= gap <= days:
+                # active 내부시간은 만료 예정, completed 내부시간은 완료 시각이라
+                # 어느 쪽이 앞설지 고정하지 않고 날짜 절대차를 사용한다.
+                gap = abs((completed_date - active_date).days)
+                if gap <= days:
                     chosen = position
                     break
             if chosen is not None:
@@ -223,7 +234,7 @@ def deduplicate_active_completed(
                 break
 
     result = active_work.drop(index=list(remove), errors="ignore")
-    return result.drop(columns=["_capture_date"], errors="ignore").reset_index(drop=True), len(remove)
+    return result.drop(columns=["_internal_date"], errors="ignore").reset_index(drop=True), len(remove)
 
 
 def search_packet_data(
@@ -237,7 +248,8 @@ def search_packet_data(
     active, duplicate_count = deduplicate_active_completed(active, completed, days=3)
     combined = pd.concat([active, completed], ignore_index=True) if not active.empty or not completed.empty else pd.DataFrame()
     if not combined.empty:
-        combined["_sort_time"] = pd.to_datetime(combined["event_time"], errors="coerce")
+        # 화면 정렬은 패킷 수신시간, 3일 중복 판정은 위의 internal_time을 사용한다.
+        combined["_sort_time"] = pd.to_datetime(combined["captured_at"], errors="coerce")
         combined = combined.sort_values("_sort_time", ascending=False, kind="mergesort").drop(columns="_sort_time")
     return combined.reset_index(drop=True), duplicate_count
 
@@ -247,8 +259,8 @@ def format_stat_text(row: pd.Series, prefix: str) -> str:
     for stat in ACTUAL_STATS:
         value = int(row.get(f"{prefix}_{stat}", 0) or 0)
         if value:
-            parts.append(f"{STAT_LABELS[stat]} {value}")
-    return " / ".join(parts)
+            parts.append(f"{STAT_LABELS[stat]}{value}")
+    return " ".join(parts)
 
 
 def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
@@ -266,7 +278,7 @@ def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
             "active": "🔵 Active",
             "completed": "🟣 Completed",
         }).fillna(work["status"]),
-        "날짜": pd.to_datetime(work["event_time"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M"),
+        "패킷시간": pd.to_datetime(work["captured_at"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M"),
         "아이템": work["itemName"],
         "판매가(만)": _to_man("unit_price"),
         "보석": work.get("gem_options", ""),
@@ -276,5 +288,4 @@ def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
         "업횟": _numeric(work, "total_upgrade_left"),
         "작횟": _numeric(work, "total_work_count"),
         "추가스탯": work.apply(lambda row: format_stat_text(row, "add"), axis=1),
-        "총스탯": work.apply(lambda row: format_stat_text(row, "total"), axis=1),
     })

@@ -71,6 +71,21 @@ GEM_GRADES = {
     26_000: ("상급", 2_250_000),
 }
 
+GEM_SHORT_STATS = {
+    0: "공",
+    1: "마",
+    2: "명",
+    3: "회",
+    4: "이",
+    5: "점",
+    6: "피",
+    7: "마",
+    8: "힘",
+    9: "인",
+    10: "럭",
+    11: "민",
+}
+
 GEM_BASE_FEE = 2_250_000
 GEM_VALUE_RATE = 0.9
 
@@ -221,8 +236,7 @@ def gem_details(option_codes: Any, prices: dict[int, int]) -> tuple[str, int, in
         grade_base = max(base for base in GEM_GRADES if base <= code)
         grade_name, processing_fee = GEM_GRADES[grade_base]
         suffix = code - grade_base
-        gem_name, stat_name = GEM_STAT_SUFFIXES[suffix]
-        labels.append(f"{grade_name} {gem_name}({stat_name})")
+        labels.append(f"{grade_name[0]}{GEM_SHORT_STATS[suffix]}")
         total_cost += prices[code] + processing_fee
     recognized = round(total_cost * GEM_VALUE_RATE)
     return ", ".join(labels), total_cost, recognized
@@ -257,10 +271,12 @@ def parse_equipment_rows(
         if completed:
             code, quantity = safe_int(raw[3], -1), safe_int(raw[4])
             total_price, unit_price = safe_int(raw[9]), safe_int(raw[10])
-            event_time = game_time_to_kst(raw[1])
+            internal_time = game_time_to_kst(raw[1])
+            event_time = internal_time
         else:
             code, quantity = safe_int(raw[2], -1), safe_int(raw[3])
             total_price, unit_price = safe_int(raw[8]), safe_int(raw[9])
+            internal_time = game_time_to_kst(raw[10])
             event_time = packet_time_to_kst(packet_time)
 
         item = catalog.get(code)
@@ -272,6 +288,9 @@ def parse_equipment_rows(
         record = {
             "status": status,
             "captured_at": packet_time_to_kst(packet_time),
+            # active=만료 예정시간, completed=판매완료 시간.
+            # 화면에는 표시하지 않고 active↔completed 3일 판정에만 사용한다.
+            "internal_time": internal_time,
             "event_time": event_time,
             "itemCode": code,
             "itemName": item["item_name"],

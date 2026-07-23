@@ -906,7 +906,13 @@ st.markdown(
         background: #e7e9f7;
         border-radius: 7px 7px 0 0;
         padding: 7px 18px;
+        min-height: 38px;
+        line-height: 1.25;
         font-weight: 700;
+      }
+      .stTabs [data-baseweb="tab"] p {
+        margin: 0;
+        line-height: 1.25;
       }
       .stTabs [aria-selected="true"] {
         background: #5b6fe5 !important;
@@ -985,7 +991,7 @@ if st.session_state.get("auto_search"):
     _run_search(df_items, st.session_state.get("query", ""))
     st.session_state["auto_search"] = False
 
-col_left, col_right = st.columns([1.2, 2.1], gap="large")
+col_left, col_right = st.columns([1.0, 2.6], gap="small")
 
 with col_left:
     base_text = st.session_state.get("base_stat_text", "")
@@ -1062,6 +1068,8 @@ with col_left:
                     st.rerun()
 
 with col_right:
+    # 상단 탭이 화면 위쪽에 붙어 글자가 잘리지 않도록 검색 입력줄과 높이를 맞춘다.
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     sell_tab, buy_tab, parquet_tab = st.tabs(["🟢 판매 API", "🔵 구매 API", "🟣 Parquet"])
 
     market_specs = [
@@ -1091,9 +1099,15 @@ with col_right:
                 column_config={
                     "색": st.column_config.Column("색", width="small"),
                     "상태": st.column_config.Column("상태", width="small"),
-                    "스탯": st.column_config.Column("스탯", width="large"),
+                    "아이템": st.column_config.Column("아이템", width="medium"),
+                    "스탯": st.column_config.Column("스탯", width="medium"),
                     "가격(만)": st.column_config.Column("가격(만)", width="small"),
-                    "코멘트": st.column_config.Column("코멘트", width="medium"),
+                    "코멘트": st.column_config.Column("코멘트", width="small"),
+                    "판매자": st.column_config.Column("판매자", width="small"),
+                    "흥정": st.column_config.Column("흥정", width="small"),
+                    "경신": st.column_config.Column("경신", width="small"),
+                    "등록": st.column_config.Column("등록", width="small"),
+                    "서버": st.column_config.Column("서버", width="small"),
                     "프로필": st.column_config.LinkColumn("프로필", display_text="열기", width="small"),
                     "링크": st.column_config.LinkColumn("링크", display_text="열기", width="small"),
                 },
@@ -1172,13 +1186,13 @@ completed_only = packet_header[1].toggle("Completed만 보기", key="packet_comp
 packet_rows = st.session_state.get("packet_rows", pd.DataFrame())
 packet_dedup = int(st.session_state.get("packet_dedup_count", 0) or 0)
 packet_header[2].caption(f"중복 Active 제외 {packet_dedup:,}건")
-packet_header[3].caption("Active 날짜: 패킷 수집시각 · Completed 날짜: 완료 데이터 시각")
+packet_header[3].caption("표시·정렬: packet_time · 3일 중복 판정: 패킷 내부시간")
 
 if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
     visible_packet = packet_rows.copy()
     if completed_only:
         visible_packet = visible_packet[visible_packet["status"].eq("completed")].copy()
-    visible_packet["_sort_time"] = pd.to_datetime(visible_packet["event_time"], errors="coerce")
+    visible_packet["_sort_time"] = pd.to_datetime(visible_packet["captured_at"], errors="coerce")
     visible_packet = visible_packet.sort_values("_sort_time", ascending=False).drop(columns="_sort_time")
     view = packet_view(visible_packet)
     st.dataframe(
@@ -1188,12 +1202,13 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
         height=440,
         column_config={
             "상태": st.column_config.Column("상태", width="small"),
+            "패킷시간": st.column_config.Column("패킷시간", width="medium"),
             "판매가(만)": st.column_config.NumberColumn("판매가(만)", format="localized"),
+            "보석": st.column_config.Column("보석", width="large"),
             "보석비(원가, 만)": st.column_config.NumberColumn("보석비(원가, 만)", format="localized"),
             "인정보석가치(90%, 만)": st.column_config.NumberColumn("인정보석가치(90%, 만)", format="localized"),
             "찐판매가(만)": st.column_config.NumberColumn("찐판매가(만)", format="localized"),
             "추가스탯": st.column_config.Column("추가스탯", width="large"),
-            "총스탯": st.column_config.Column("총스탯", width="large"),
         },
     )
 elif PACKET_ACTIVE_FILE.exists() or PACKET_COMPLETED_FILE.exists():

@@ -18,6 +18,7 @@ def sample_row(**overrides):
     row = {
         "status": "active",
         "captured_at": "2026-07-20 10:00:00",
+        "internal_time": "2026-07-23 10:00:00",
         "event_time": "2026-07-20 10:00:00",
         "itemCode": 1_000_001,
         "itemName": "테스트 장비",
@@ -81,10 +82,19 @@ class PacketRuleTests(unittest.TestCase):
         ])
         result = packet_view(frame)
         self.assertEqual(result.at[0, "상태"], "🔵 Active")
+        self.assertEqual(result.at[0, "패킷시간"], "2026-07-20 10:00")
         self.assertEqual(result.at[0, "판매가(만)"], 1_001)
         self.assertEqual(result.at[0, "보석비(원가, 만)"], 225)
         self.assertEqual(result.at[0, "인정보석가치(90%, 만)"], 203)
         self.assertEqual(result.at[0, "찐판매가(만)"], 798)
+        self.assertNotIn("총스탯", result.columns)
+
+    def test_additional_stats_are_compact(self):
+        frame = pd.DataFrame([
+            sample_row(add_DEX=21, add_PDD=-1),
+        ])
+        result = packet_view(frame)
+        self.assertEqual(result.at[0, "추가스탯"], "덱21 물방-1")
 
     def test_completed_removes_matching_active_within_three_days(self):
         active = pd.DataFrame([sample_row()])
@@ -92,6 +102,7 @@ class PacketRuleTests(unittest.TestCase):
             sample_row(
                 status="completed",
                 captured_at="2026-07-22 10:00:00",
+                internal_time="2026-07-21 10:00:00",
                 event_time="2026-07-22 10:00:00",
             )
         ])
@@ -105,6 +116,7 @@ class PacketRuleTests(unittest.TestCase):
             sample_row(
                 status="completed",
                 captured_at="2026-07-24 10:00:00",
+                internal_time="2026-07-19 10:00:00",
                 event_time="2026-07-24 10:00:00",
             )
         ])

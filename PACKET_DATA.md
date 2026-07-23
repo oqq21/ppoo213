@@ -43,9 +43,9 @@ python build_packet_web_data.py
 
 ## 날짜
 
-- Active: 패킷을 실제로 수집한 `packet_time`(KST)
-- Completed: 완료 행 내부의 거래 완료시각(KST)
-- 두 파일 모두 중복 판별용 패킷 수집시각 `captured_at`을 별도로 보존합니다.
+- Active/Completed 모두 웹 표시와 정렬에는 패킷을 실제로 수집한 `packet_time`(KST)을 사용합니다.
+- Active↔Completed의 3일 중복 판정에는 패킷 행 내부의 `internal_time`을 사용합니다.
+- `captured_at`에는 패킷 수집시각을, `event_time`에는 기존 상태별 시각을 별도로 보존합니다.
 
 ## Active/Completed 중복
 
