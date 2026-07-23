@@ -72,6 +72,21 @@ ACTUAL_STATS = [
     "PDD", "MDD", "ACC", "EVA", "SPEED", "JUMP",
 ]
 
+GEM_OPTION_LABELS = {
+    0: ("공", (1, 2, 3)),
+    1: ("마", (1, 2, 3)),
+    2: ("명", (2, 3, 5)),
+    3: ("회", (2, 3, 5)),
+    4: ("이속", (2, 3, 5)),
+    5: ("점프", (1, 2, 3)),
+    6: ("HP", (10, 20, 30)),
+    7: ("MP", (10, 20, 30)),
+    8: ("힘", (2, 3, 5)),
+    9: ("인", (2, 3, 5)),
+    10: ("럭", (2, 3, 5)),
+    11: ("덱", (1, 3, 5)),
+}
+
 
 def read_packet_rows(path: Path, item_codes: Iterable[int]) -> pd.DataFrame:
     codes = sorted({int(code) for code in item_codes})
@@ -263,6 +278,23 @@ def format_stat_text(row: pd.Series, prefix: str) -> str:
     return " ".join(parts)
 
 
+def format_gem_text(row: pd.Series) -> str:
+    parts = []
+    for raw_code in re.findall(r"\d+", str(row.get("option_codes", "") or "")):
+        code = int(raw_code)
+        if 6_000 <= code <= 6_011:
+            grade_index, suffix = 0, code - 6_000
+        elif 16_000 <= code <= 16_011:
+            grade_index, suffix = 1, code - 16_000
+        elif 26_000 <= code <= 26_011:
+            grade_index, suffix = 2, code - 26_000
+        else:
+            continue
+        stat_name, values = GEM_OPTION_LABELS[suffix]
+        parts.append(f"{stat_name}+{values[grade_index]}")
+    return ", ".join(parts)
+
+
 def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame()
@@ -281,7 +313,8 @@ def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
         "패킷시간": pd.to_datetime(work["captured_at"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M"),
         "아이템": work["itemName"],
         "판매가(만)": _to_man("unit_price"),
-        "보석": work.get("gem_options", ""),
+        # 저장된 옛 등급명 대신 옵션코드로 실제 적용 스탯을 표시한다.
+        "보석": work.apply(format_gem_text, axis=1),
         "보석비(원가, 만)": _to_man("gem_cost"),
         "인정보석가치(90%, 만)": _to_man("recognized_gem_value"),
         "찐판매가(만)": _to_man("true_price"),

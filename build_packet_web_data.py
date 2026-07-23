@@ -71,19 +71,19 @@ GEM_GRADES = {
     26_000: ("상급", 2_250_000),
 }
 
-GEM_SHORT_STATS = {
-    0: "공",
-    1: "마",
-    2: "명",
-    3: "회",
-    4: "이",
-    5: "점",
-    6: "피",
-    7: "마",
-    8: "힘",
-    9: "인",
-    10: "럭",
-    11: "민",
+GEM_OPTION_LABELS = {
+    0: ("공", (1, 2, 3)),
+    1: ("마", (1, 2, 3)),
+    2: ("명", (2, 3, 5)),
+    3: ("회", (2, 3, 5)),
+    4: ("이속", (2, 3, 5)),
+    5: ("점프", (1, 2, 3)),
+    6: ("HP", (10, 20, 30)),
+    7: ("MP", (10, 20, 30)),
+    8: ("힘", (2, 3, 5)),
+    9: ("인", (2, 3, 5)),
+    10: ("럭", (2, 3, 5)),
+    11: ("덱", (1, 3, 5)),
 }
 
 GEM_BASE_FEE = 2_250_000
@@ -234,9 +234,11 @@ def gem_details(option_codes: Any, prices: dict[int, int]) -> tuple[str, int, in
     total_cost = GEM_BASE_FEE
     for code in codes:
         grade_base = max(base for base in GEM_GRADES if base <= code)
-        grade_name, processing_fee = GEM_GRADES[grade_base]
+        _grade_name, processing_fee = GEM_GRADES[grade_base]
         suffix = code - grade_base
-        labels.append(f"{grade_name[0]}{GEM_SHORT_STATS[suffix]}")
+        grade_index = tuple(GEM_GRADES).index(grade_base)
+        stat_name, values = GEM_OPTION_LABELS[suffix]
+        labels.append(f"{stat_name}+{values[grade_index]}")
         total_cost += prices[code] + processing_fee
     recognized = round(total_cost * GEM_VALUE_RATE)
     return ", ".join(labels), total_cost, recognized

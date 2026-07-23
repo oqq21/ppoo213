@@ -96,6 +96,16 @@ class PacketRuleTests(unittest.TestCase):
         result = packet_view(frame)
         self.assertEqual(result.at[0, "추가스탯"], "덱21 물방-1")
 
+    def test_gems_display_actual_stat_values(self):
+        frame = pd.DataFrame([
+            sample_row(
+                option_codes="26008,26011,26000,16006",
+                gem_options="상급 힘, 상급 민첩, 상급 공격, 중급 HP",
+            ),
+        ])
+        result = packet_view(frame)
+        self.assertEqual(result.at[0, "보석"], "힘+5, 덱+5, 공+3, HP+20")
+
     def test_completed_removes_matching_active_within_three_days(self):
         active = pd.DataFrame([sample_row()])
         completed = pd.DataFrame([
