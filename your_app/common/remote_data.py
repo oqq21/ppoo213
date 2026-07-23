@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -18,8 +19,8 @@ DATA_FILES = (
     "packet_active.parquet",
     "packet_completed.parquet",
 )
-DEFAULT_RAW_BASE = (
-    "https://github.com/oqq21/ppoo213/raw/refs/heads/data-latest"
+DEFAULT_RELEASE_API = (
+    "https://api.github.com/repos/oqq21/ppoo213/releases/tags/web-data-latest"
 )
 _LOCK = threading.Lock()
 _STATE: dict[str, object] = {
@@ -66,35 +67,49 @@ def _validate_manifest(value: object) -> dict:
             raise ValueError(f"데이터 manifest에 {name} 정보가 없습니다.")
         sha = str(info.get("sha256") or "")
         size = info.get("size")
+        asset = str(info.get("asset") or "")
         if not re.fullmatch(r"[0-9a-f]{64}", sha):
             raise ValueError(f"{name} sha256이 올바르지 않습니다.")
         if not isinstance(size, int) or size < 0:
             raise ValueError(f"{name} size가 올바르지 않습니다.")
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", asset):
+            raise ValueError(f"{name} Release 파일명이 올바르지 않습니다.")
     result = dict(value)
     result["version"] = version
     return result
 
 
+def _snapshot_from_manifest(manifest_path: Path) -> DataSnapshot | None:
+    try:
+        manifest = _validate_manifest(
+            json.loads(manifest_path.read_text(encoding="utf-8"))
+        )
+        directory = manifest_path.parent
+        if all((directory / name).exists() for name in DATA_FILES):
+            return DataSnapshot(
+                version=manifest["version"],
+                updated_at=str(manifest.get("updated_at") or ""),
+                directory=directory,
+            )
+    except Exception:
+        return None
+    return None
+
+
 def _cached_snapshot(cache_root: Path) -> DataSnapshot | None:
     manifests = sorted(
-        cache_root.glob("*/manifest.json"),
+        (
+            path
+            for path in cache_root.glob("*/manifest.json")
+            if path.parent.name != "blobs"
+        ),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
     for manifest_path in manifests:
-        try:
-            manifest = _validate_manifest(
-                json.loads(manifest_path.read_text(encoding="utf-8"))
-            )
-            directory = manifest_path.parent
-            if all((directory / name).exists() for name in DATA_FILES):
-                return DataSnapshot(
-                    version=manifest["version"],
-                    updated_at=str(manifest.get("updated_at") or ""),
-                    directory=directory,
-                )
-        except Exception:
-            continue
+        snapshot = _snapshot_from_manifest(manifest_path)
+        if snapshot is not None:
+            return snapshot
     return None
 
 
@@ -126,21 +141,102 @@ def _download_file(url: str, target: Path, expected_sha: str, expected_size: int
         temporary.unlink(missing_ok=True)
 
 
+def _release_assets(release: object) -> dict[str, dict]:
+    if not isinstance(release, dict):
+        raise ValueError("GitHub Release 응답이 올바르지 않습니다.")
+    assets = release.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError("GitHub Release에 assets가 없습니다.")
+    result = {}
+    for asset in assets:
+        if isinstance(asset, dict) and asset.get("name") and asset.get("browser_download_url"):
+            result[str(asset["name"])] = asset
+    return result
+
+
+def _current_manifest_asset(release: dict, assets: dict[str, dict]) -> dict:
+    body = str(release.get("body") or "")
+    match = re.search(r"(?m)^current_manifest=([A-Za-z0-9._-]+)$", body)
+    if match and match.group(1) in assets:
+        return assets[match.group(1)]
+    manifests = [
+        asset
+        for name, asset in assets.items()
+        if re.fullmatch(r"manifest-[A-Za-z0-9._-]+\.json", name)
+    ]
+    if not manifests:
+        raise ValueError("GitHub Release에 최신 manifest가 없습니다.")
+    return max(
+        manifests,
+        key=lambda asset: (
+            str(asset.get("created_at") or ""),
+            int(asset.get("id") or 0),
+        ),
+    )
+
+
+def _link_or_copy(source: Path, target: Path) -> None:
+    if target.exists():
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+
+
+def _prune_cache(cache_root: Path, current_version: str, keep_versions: int = 2) -> None:
+    candidates = []
+    for manifest_path in cache_root.glob("*/manifest.json"):
+        if manifest_path.parent.name == "blobs":
+            continue
+        snapshot = _snapshot_from_manifest(manifest_path)
+        if snapshot is not None:
+            candidates.append((manifest_path.stat().st_mtime, snapshot))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    keep = {current_version}
+    for _, snapshot in candidates:
+        if len(keep) >= max(1, keep_versions):
+            break
+        keep.add(snapshot.version)
+
+    referenced_hashes: set[str] = set()
+    for _, snapshot in candidates:
+        if snapshot.version not in keep:
+            shutil.rmtree(snapshot.directory, ignore_errors=True)
+            continue
+        try:
+            manifest = _validate_manifest(
+                json.loads((snapshot.directory / "manifest.json").read_text(encoding="utf-8"))
+            )
+            referenced_hashes.update(
+                str(info["sha256"]) for info in manifest["files"].values()
+            )
+        except Exception:
+            continue
+
+    blob_dir = cache_root / "blobs"
+    if blob_dir.exists():
+        for blob in blob_dir.iterdir():
+            if blob.is_file() and blob.name not in referenced_hashes:
+                blob.unlink(missing_ok=True)
+
+
 def ensure_data_snapshot(
     cache_root: str | Path | None = None,
-    check_interval: float = 60.0,
-    raw_base: str | None = None,
+    check_interval: float = 120.0,
+    release_api: str | None = None,
 ) -> DataSnapshot:
     root = Path(
         cache_root
         or os.environ.get("PP213_DATA_CACHE_DIR")
         or (Path(tempfile.gettempdir()) / "ppoo213-data")
     )
-    base = (
-        raw_base
-        or os.environ.get("PP213_DATA_RAW_BASE")
-        or DEFAULT_RAW_BASE
-    ).rstrip("/")
+    api_url = (
+        release_api
+        or os.environ.get("PP213_DATA_RELEASE_API")
+        or DEFAULT_RELEASE_API
+    )
 
     with _LOCK:
         now = time.monotonic()
@@ -156,34 +252,63 @@ def ensure_data_snapshot(
         root.mkdir(parents=True, exist_ok=True)
         cache_buster = int(time.time() // max(1.0, check_interval))
         try:
-            response = requests.get(
-                f"{base}/manifest.json?v={cache_buster}",
+            release_response = requests.get(
+                api_url,
+                params={"v": cache_buster},
+                timeout=(15, 30),
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "Cache-Control": "no-cache",
+                },
+            )
+            release_response.raise_for_status()
+            release = release_response.json()
+            assets = _release_assets(release)
+            manifest_asset = _current_manifest_asset(release, assets)
+
+            manifest_response = requests.get(
+                str(manifest_asset["browser_download_url"]),
                 timeout=(15, 30),
                 headers={"Cache-Control": "no-cache"},
             )
-            response.raise_for_status()
-            manifest = _validate_manifest(response.json())
+            manifest_response.raise_for_status()
+            manifest = _validate_manifest(manifest_response.json())
             version = manifest["version"]
             directory = root / version
+            blob_dir = root / "blobs"
             directory.mkdir(parents=True, exist_ok=True)
+            blob_dir.mkdir(parents=True, exist_ok=True)
 
             for name in DATA_FILES:
-                target = directory / name
                 info = manifest["files"][name]
                 expected_sha = str(info["sha256"])
                 expected_size = int(info["size"])
+                asset_name = str(info["asset"])
+                asset = assets.get(asset_name)
+                if asset is None:
+                    raise ValueError(f"GitHub Release 파일이 없습니다: {asset_name}")
+
+                blob = blob_dir / expected_sha
                 valid = (
+                    blob.exists()
+                    and blob.stat().st_size == expected_size
+                    and _sha256(blob) == expected_sha
+                )
+                if not valid:
+                    _download_file(
+                        str(asset["browser_download_url"]),
+                        blob,
+                        expected_sha,
+                        expected_size,
+                    )
+                target = directory / name
+                target_valid = (
                     target.exists()
                     and target.stat().st_size == expected_size
                     and _sha256(target) == expected_sha
                 )
-                if not valid:
-                    _download_file(
-                        f"{base}/{name}?v={version}",
-                        target,
-                        expected_sha,
-                        expected_size,
-                    )
+                if not target_valid:
+                    _link_or_copy(blob, target)
 
             (directory / "manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2),
@@ -196,6 +321,7 @@ def ensure_data_snapshot(
             )
             _STATE["snapshot"] = snapshot
             _STATE["checked_at"] = now
+            _prune_cache(root, version)
             return snapshot
         except Exception:
             fallback = (

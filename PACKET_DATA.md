@@ -15,9 +15,15 @@ python build_packet_web_data.py
 
 ## 웹 데이터 게시
 
-Parquet는 `main` 브랜치에 커밋하지 않습니다. 다음 명령은
+Parquet는 어떤 Git 브랜치에도 커밋하지 않습니다. 다음 명령은
 `요약본.parquet`, `packet_active.parquet`, `packet_completed.parquet`를
-`data-latest` 브랜치의 단일 스냅샷으로 교체합니다.
+`web-data-latest` GitHub Release의 최신 자산으로 교체합니다.
+
+Release 주소:
+
+```text
+https://github.com/oqq21/ppoo213/releases/tag/web-data-latest
+```
 
 ```powershell
 python publish_data_snapshot.py
@@ -33,8 +39,10 @@ python publish_data_snapshot.py `
 ```
 
 - 세 파일의 내용이 같으면 게시를 건너뜁니다.
-- 변경되면 이전 브랜치 이력과 연결되지 않은 최신 스냅샷 한 개로 교체합니다.
-- Streamlit 앱은 manifest를 60초마다 확인하고 새 버전을 원자적으로 내려받습니다.
+- 파일명에 SHA-256을 넣고 새 파일을 먼저 올린 뒤 manifest를 전환합니다.
+- 전환이 끝나면 이전 Release 자산을 삭제해 최신 스냅샷 하나만 유지합니다.
+- Streamlit 앱은 Release를 120초마다 확인하고 바뀐 파일만 내려받습니다.
+- 다운로드 또는 게시 실패 시 이전 정상 스냅샷을 계속 사용합니다.
 - 기존 `publish_parquet.py`를 실행해도 같은 게시기가 호출됩니다.
 
 기본 입력 경로는 저장소의 상위 폴더입니다. 다른 위치라면

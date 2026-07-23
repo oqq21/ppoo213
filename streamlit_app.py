@@ -3,6 +3,7 @@ import re
 import sys
 import html
 import tempfile
+import importlib
 from typing import Optional
 from pathlib import Path
 from datetime import datetime
@@ -12,6 +13,8 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
+
+APP_BUILD = "2026-07-24-release-v2"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common.query_utils import mask_for_query
@@ -25,10 +28,23 @@ from your_app.api.client import (
 )
 from your_app.processing.legacy_processor import process_items
 from your_app.processing import sales_store
-from your_app.processing.packet_store import packet_view, search_packet_data
-from your_app.common.remote_data import ensure_data_snapshot
+from your_app.processing import packet_store as _packet_store
+from your_app.common import remote_data as _remote_data
 
-APP_BUILD = "2026-07-24-data-latest-v1"
+# Streamlit Cloud는 진입 파일만 다시 실행하면서 이미 import한 하위 모듈을
+# 이전 프로세스 메모리에 남길 수 있다. 빌드가 바뀐 경우에만 명시적으로
+# 다시 읽어 화면 변환 규칙과 원격 데이터 로더가 즉시 적용되게 한다.
+if getattr(_packet_store, "_PP213_APP_BUILD", "") != APP_BUILD:
+    _packet_store = importlib.reload(_packet_store)
+    _packet_store._PP213_APP_BUILD = APP_BUILD
+if getattr(_remote_data, "_PP213_APP_BUILD", "") != APP_BUILD:
+    _remote_data = importlib.reload(_remote_data)
+    _remote_data._PP213_APP_BUILD = APP_BUILD
+
+packet_view = _packet_store.packet_view
+search_packet_data = _packet_store.search_packet_data
+ensure_data_snapshot = _remote_data.ensure_data_snapshot
+
 PREFERRED_PARQUET = ["요약본.parquet"]
 DATA_CACHE_DIR = Path(tempfile.gettempdir()) / "ppoo213-data"
 PACKET_ACTIVE_FILE = DATA_CACHE_DIR / "packet_active.parquet"
@@ -932,7 +948,7 @@ st.markdown(
 
 excel_file = BASE_DIR / "item.xlsx"
 try:
-    data_snapshot = ensure_data_snapshot(DATA_CACHE_DIR, check_interval=60)
+    data_snapshot = ensure_data_snapshot(DATA_CACHE_DIR, check_interval=120)
 except Exception as exc:
     st.error(f"최신 데이터 스냅샷을 받지 못했습니다: {exc}")
     st.stop()
@@ -954,7 +970,7 @@ df_items = _load_items(str(excel_file))
 
 def _watch_remote_data() -> None:
     try:
-        latest = ensure_data_snapshot(DATA_CACHE_DIR, check_interval=60)
+        latest = ensure_data_snapshot(DATA_CACHE_DIR, check_interval=120)
     except Exception:
         return
     if latest.version == data_snapshot.version:
@@ -965,7 +981,7 @@ def _watch_remote_data() -> None:
 
 
 if hasattr(st, "fragment"):
-    st.fragment(run_every="60s")(_watch_remote_data)()
+    st.fragment(run_every="120s")(_watch_remote_data)()
 
 
 def _on_query_change() -> None:
