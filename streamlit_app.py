@@ -24,8 +24,11 @@ from your_app.api.client import (
 )
 from your_app.processing.legacy_processor import process_items
 from your_app.processing import sales_store
+from your_app.processing.packet_store import packet_view, search_packet_data
 
 PREFERRED_PARQUET = ["요약본.parquet"]
+PACKET_ACTIVE_FILE = BASE_DIR / "packet_active.parquet"
+PACKET_COMPLETED_FILE = BASE_DIR / "packet_completed.parquet"
 
 
 def _find_sales_file(base_dir: Path) -> Optional[Path]:
@@ -82,6 +85,17 @@ def _selected_items_from_group(df_src: pd.DataFrame, row: pd.Series) -> list[str
     if rep:
         return [rep] + [x for x in names if x != rep]
     return names
+
+
+def _selected_item_codes_from_group(df_src: pd.DataFrame, row: pd.Series) -> list[int]:
+    if df_src is None or df_src.empty or "itemCode" not in df_src.columns:
+        return []
+    mask = pd.Series(True, index=df_src.index)
+    for column in ("sheet", "gender", "reqLevel"):
+        if column in df_src.columns and column in row.index:
+            mask &= df_src[column].astype(str).eq(str(row.get(column, "")))
+    codes = pd.to_numeric(df_src.loc[mask, "itemCode"], errors="coerce").dropna().astype(int)
+    return list(dict.fromkeys(codes.tolist()))
 
 
 BASE_STAT_COLS = ["공", "마", "힘", "덱", "인", "럭", "명", "물방", "마방", "이속", "점프", "회피"]
@@ -351,6 +365,123 @@ def _proc_view_df(rows: list[dict]) -> pd.DataFrame:
     return out
 
 
+_STAT_LABEL_ORDER = ["힘", "덱", "인", "럭", "공", "마", "명", "회피", "이속", "점프", "물방", "마방", "HP", "MP"]
+_STAT_LABEL_ALIASES = {"회": "회피", "피": "HP", "hp": "HP", "mp": "MP"}
+
+
+def _parse_stat_text(value) -> dict[str, int]:
+    if isinstance(value, (list, tuple)):
+        text = " ".join(str(part) for part in value)
+    else:
+        text = str(value or "")
+    result: dict[str, int] = {}
+    pattern = r"(물방|마방|회피|이속|점프|힘|덱|인|럭|공|마|명|회|HP|MP|hp|mp|피)\s*\+?\s*(-?\d+)"
+    for name, raw_number in re.findall(pattern, text):
+        canonical = _STAT_LABEL_ALIASES.get(name, name)
+        result[canonical] = result.get(canonical, 0) + int(raw_number)
+    return result
+
+
+def _base_stats_for_item(df_items: pd.DataFrame, item_name: str) -> dict[str, int]:
+    if df_items is None or df_items.empty:
+        return {}
+    match = df_items[df_items["itemName"].astype(str).eq(str(item_name))]
+    if match.empty:
+        return {}
+    row = match.iloc[0]
+    result = {}
+    for label in _STAT_LABEL_ORDER:
+        column = "회피" if label == "회피" else label
+        if column in row.index:
+            result[label] = int(pd.to_numeric(pd.Series([row.get(column)]), errors="coerce").fillna(0).iloc[0])
+    return result
+
+
+def _canonical_total_stats(value, item_name: str, df_items: pd.DataFrame, is_additional: bool) -> tuple[int, ...]:
+    stats = _parse_stat_text(value)
+    if is_additional:
+        base = _base_stats_for_item(df_items, item_name)
+        stats = {label: int(base.get(label, 0)) + int(stats.get(label, 0)) for label in _STAT_LABEL_ORDER}
+    return tuple(int(stats.get(label, 0)) for label in _STAT_LABEL_ORDER)
+
+
+def _normalize_key_text(value) -> str:
+    return re.sub(r"[^0-9a-zA-Z가-힣]", "", str(value or "")).lower()
+
+
+def _combined_market_rows(
+    api_sell: pd.DataFrame,
+    proc_rows: list[dict],
+    df_items: pd.DataFrame,
+) -> pd.DataFrame:
+    records: list[dict] = []
+    api_keys: set[tuple] = set()
+
+    if isinstance(api_sell, pd.DataFrame) and not api_sell.empty:
+        for _, row in api_sell.iterrows():
+            item = str(row.get("itemName", ""))
+            price = int(_price_to_number(row.get("itemPrice")) or 0)
+            seller = str(row.get("global_name", ""))
+            stats_value = row.get("optionSummarize", "")
+            key = (
+                _normalize_key_text(item),
+                price,
+                _canonical_total_stats(stats_value, item, df_items, is_additional=False),
+                _normalize_key_text(seller),
+            )
+            api_keys.add(key)
+            records.append({
+                "_source_order": 0,
+                "_time": pd.to_datetime(row.get("updated_at"), errors="coerce"),
+                "출처": "API",
+                "상태": "판매중" if bool(row.get("tradeStatus", True)) else "판매완료",
+                "아이템": item,
+                "가격": price,
+                "스탯": _normalize_option(stats_value),
+                "판매자": seller,
+                "날짜": _relative_time(row.get("updated_at") or row.get("created_at")),
+                "비고": str(row.get("comment", "")),
+                "링크": str(row.get("profileUrl", "")),
+            })
+
+    for row in proc_rows or []:
+        item = str(row.get("item", ""))
+        price = int(row.get("price_num") or 0)
+        seller = str(row.get("seller", ""))
+        stats_value = row.get("stats", "")
+        key = (
+            _normalize_key_text(item),
+            price,
+            _canonical_total_stats(stats_value, item, df_items, is_additional=True),
+            _normalize_key_text(seller),
+        )
+        if key in api_keys:
+            continue
+        records.append({
+            "_source_order": 1,
+            "_time": pd.to_datetime(row.get("date_raw"), errors="coerce"),
+            "출처": "Parquet",
+            "상태": "판매중" if bool(row.get("highlight", True)) else "판매완료",
+            "아이템": item,
+            "가격": price,
+            "스탯": str(stats_value),
+            "판매자": seller,
+            "날짜": str(row.get("days_ago", "")),
+            "비고": str(row.get("comment", "")),
+            "링크": str(row.get("url", "")),
+        })
+
+    if not records:
+        return pd.DataFrame()
+    frame = pd.DataFrame(records)
+    frame = frame.sort_values(
+        ["_source_order", "_time"],
+        ascending=[True, False],
+        kind="mergesort",
+    )
+    return frame.drop(columns=["_source_order", "_time"]).reset_index(drop=True)
+
+
 def _build_site_search_url(sheet: str, gender: str, reqlevel: int, item_name: str, stat_tokens: list[str]) -> str:
     try:
         from your_app.api.client import build_params
@@ -435,7 +566,14 @@ def _paginate_list(rows: list[dict], page: int, page_size: int) -> tuple[list[di
     return rows[start:end], page, pages, total
 
 
-def _save_history_snapshot(query: str, tokens: list[str], api_sell: pd.DataFrame, api_buy: pd.DataFrame, proc_rows: list[dict]) -> None:
+def _save_history_snapshot(
+    query: str,
+    tokens: list[str],
+    api_sell: pd.DataFrame,
+    api_buy: pd.DataFrame,
+    proc_rows: list[dict],
+    packet_rows: pd.DataFrame,
+) -> None:
     q = (query or "").strip()
     stat_str = " ".join(tokens)
     if not q and not stat_str:
@@ -448,6 +586,7 @@ def _save_history_snapshot(query: str, tokens: list[str], api_sell: pd.DataFrame
         "api_sell": api_sell.copy() if isinstance(api_sell, pd.DataFrame) else pd.DataFrame(),
         "api_buy": api_buy.copy() if isinstance(api_buy, pd.DataFrame) else pd.DataFrame(),
         "proc_rows": list(proc_rows) if isinstance(proc_rows, list) else [],
+        "packet_rows": packet_rows.copy() if isinstance(packet_rows, pd.DataFrame) else pd.DataFrame(),
     }
     def _same(a, b):
         return a.get("검색어") == b.get("검색어") and a.get("스탯") == b.get("스탯")
@@ -493,10 +632,11 @@ def _queue_apply_history(h: dict) -> None:
         "stat3": tokens[2] if len(tokens) > 2 else "",
         "reset_pages": True,
     }
-    if "api_sell" in h or "proc_rows" in h:
+    if "api_sell" in h or "proc_rows" in h or "packet_rows" in h:
         pending["api_sell"] = h.get("api_sell", pd.DataFrame())
         pending["api_buy"] = h.get("api_buy", pd.DataFrame())
         pending["proc_rows"] = h.get("proc_rows", [])
+        pending["packet_rows"] = h.get("packet_rows", pd.DataFrame())
         pending["use_cached"] = True
     st.session_state["pending_apply"] = pending
     st.session_state["auto_search"] = True
@@ -786,13 +926,14 @@ st.markdown(
 pending = st.session_state.pop("pending_apply", None)
 if isinstance(pending, dict) and pending:
     for k, v in pending.items():
-        if k in ("api_sell", "api_buy", "proc_rows", "reset_pages"):
+        if k in ("api_sell", "api_buy", "proc_rows", "packet_rows", "reset_pages"):
             continue
         st.session_state[k] = v
     if pending.get("use_cached"):
         st.session_state["api_sell"] = pending.get("api_sell", pd.DataFrame())
         st.session_state["api_buy"] = pending.get("api_buy", pd.DataFrame())
         st.session_state["proc_rows"] = pending.get("proc_rows", [])
+        st.session_state["packet_rows"] = pending.get("packet_rows", pd.DataFrame())
         st.session_state["run_now"] = False
     if pending.get("reset_pages"):
         st.session_state["proc_page"] = 1
@@ -887,35 +1028,38 @@ with col_left:
                     st.rerun()
 
 with col_right:
-    st.caption("가공 결과")
-    proc_rows = st.session_state.get("proc_rows", [])
-    page_size_proc = 10
-    proc_page = st.session_state.get("proc_page", 1)
-    page_rows, proc_page, proc_pages, proc_total = _paginate_list(proc_rows, proc_page, page_size_proc)
-    st.session_state["proc_page"] = proc_page
+    packet_header = st.columns([2, 2, 5])
+    packet_header[0].caption("패킷 Active / Completed")
+    completed_only = packet_header[1].toggle("Completed만 보기", key="packet_completed_only")
+    packet_rows = st.session_state.get("packet_rows", pd.DataFrame())
+    packet_dedup = int(st.session_state.get("packet_dedup_count", 0) or 0)
+    packet_header[2].caption(f"중복 Active 제외 {packet_dedup:,}건")
 
-    nav = st.columns([0.6, 0.6, 2, 8])
-    prev_p = nav[0].button("◀", key="proc_prev", type="primary")
-    next_p = nav[1].button("▶", key="proc_next", type="primary")
-    nav[2].caption(f"{proc_page}/{proc_pages} · 총 {proc_total}")
-    if prev_p and proc_page > 1:
-        st.session_state["proc_page"] = proc_page - 1
-        st.rerun()
-    if next_p and proc_pages and proc_page < proc_pages:
-        st.session_state["proc_page"] = proc_page + 1
-        st.rerun()
-
-    if page_rows:
-        view = _proc_view_df(page_rows)
+    if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
+        visible_packet = packet_rows.copy()
+        if completed_only:
+            visible_packet = visible_packet[visible_packet["status"].eq("completed")].copy()
+        visible_packet["_sort_time"] = pd.to_datetime(visible_packet["event_time"], errors="coerce")
+        visible_packet = visible_packet.sort_values("_sort_time", ascending=False).drop(columns="_sort_time")
+        view = packet_view(visible_packet)
         st.dataframe(
             view,
             use_container_width=True,
             hide_index=True,
             height=420,
-            column_config={"링크": st.column_config.LinkColumn("링크", display_text="열기")},
+            column_config={
+                "판매가": st.column_config.NumberColumn("판매가", format="localized"),
+                "보석비(원가)": st.column_config.NumberColumn("보석비(원가)", format="localized"),
+                "인정보석가치(90%)": st.column_config.NumberColumn("인정보석가치(90%)", format="localized"),
+                "찐판매가": st.column_config.NumberColumn("찐판매가", format="localized"),
+                "추가스탯": st.column_config.Column("추가스탯", width="large"),
+                "총스탯": st.column_config.Column("총스탯", width="large"),
+            },
         )
+    elif PACKET_ACTIVE_FILE.exists() or PACKET_COMPLETED_FILE.exists():
+        st.info("조건에 맞는 패킷 장비가 없습니다.")
     else:
-        st.info("가공 결과가 없습니다.")
+        st.info("packet_active.parquet / packet_completed.parquet를 생성하면 패킷 매물이 표시됩니다.")
 
 groups = st.session_state.get("groups")
 if groups is not None and not groups.empty:
@@ -945,20 +1089,41 @@ if groups is not None and not groups.empty:
 
             _ensure_sales_loaded(str(sales_file))
             proc_rows = []
+            packet_codes: list[int] = []
             for _, row in target_groups.iterrows():
                 selected_items = _selected_items_from_group(df_filtered, row)
                 if not selected_items:
                     continue
                 result = process_items(tokens, row.get("sheet", ""), selected_items, str(excel_file), str(sales_file))
                 proc_rows.extend(result.get(4, []) or [])
+                packet_codes.extend(_selected_item_codes_from_group(df_filtered, row))
+
+            packet_rows = pd.DataFrame()
+            packet_dedup_count = 0
+            if PACKET_ACTIVE_FILE.exists() and PACKET_COMPLETED_FILE.exists() and packet_codes:
+                packet_rows, packet_dedup_count = search_packet_data(
+                    PACKET_ACTIVE_FILE,
+                    PACKET_COMPLETED_FILE,
+                    packet_codes,
+                    tokens,
+                )
 
         st.session_state["api_sell"] = api_sell
         st.session_state["api_buy"] = api_buy
         st.session_state["proc_rows"] = proc_rows
+        st.session_state["packet_rows"] = packet_rows
+        st.session_state["packet_dedup_count"] = packet_dedup_count
         st.session_state["proc_page"] = 1
         st.session_state["page_sell"] = 1
         st.session_state["page_buy"] = 1
-        _save_history_snapshot(st.session_state.get("query", ""), tokens, api_sell, api_buy, proc_rows)
+        _save_history_snapshot(
+            st.session_state.get("query", ""),
+            tokens,
+            api_sell,
+            api_buy,
+            proc_rows,
+            packet_rows,
+        )
         st.session_state["run_now"] = False
         st.rerun()
 
@@ -966,45 +1131,30 @@ api_sell = st.session_state.get("api_sell", pd.DataFrame())
 api_buy = st.session_state.get("api_buy", pd.DataFrame())
 
 if include_api:
-    if "api_sort" not in st.session_state:
-        st.session_state["api_sort"] = "가격순"
-    top = st.columns([1.2, 1, 6])
+    top = st.columns([1.8, 6])
     with top[0]:
-        api_kind = st.radio(
+        market_kind = st.radio(
             "구분",
-            ["판매", "구매"],
+            ["판매 통합", "구매 API"],
             horizontal=True,
-            key="api_kind",
+            key="market_kind",
             label_visibility="collapsed",
         )
-    with top[1]:
-        api_sort = st.radio(
-            "정렬",
-            ["최신순", "가격순"],
-            horizontal=True,
-            key="api_sort",
-            label_visibility="collapsed",
-        )
+    top[1].caption("판매 통합은 API를 먼저 표시하며, 동일 매물은 API만 남깁니다.")
 
-    src = api_sell if api_kind == "판매" else api_buy
-    view = _api_view_df(src, "price" if api_sort == "가격순" else "time")
-    if api_sort == "가격순" and "가격(만)" in view.columns:
-        view["_sort_price"] = view["가격(만)"].map(_price_to_number).fillna(0)
-        view["_sort_my"] = view.get("색", "").astype(str).str.contains(MY_ACCOUNT_DOT, regex=False)
-        view = view.sort_values(
-            ["_sort_my", "_sort_price"],
-            ascending=[False, True],
-            kind="mergesort",
-        ).drop(columns=["_sort_my", "_sort_price"], errors="ignore").reset_index(drop=True)
-        st.session_state["api_render_id"] = st.session_state.get("api_render_id", 0) + 1
-    page_key = "page_sell" if api_kind == "판매" else "page_buy"
+    if market_kind == "판매 통합":
+        view = _combined_market_rows(api_sell, st.session_state.get("proc_rows", []), df_items)
+        page_key = "page_sell"
+    else:
+        view = _api_view_df(api_buy, "time")
+        page_key = "page_buy"
     page = st.session_state.get(page_key, 1)
-    page_view, page, pages, total = _paginate_df(view, page, 7)
+    page_view, page, pages, total = _paginate_df(view, page, 12)
     st.session_state[page_key] = page
 
     nav = st.columns([0.6, 0.6, 2, 8])
-    prev_key = "sell_prev" if api_kind == "판매" else "buy_prev"
-    next_key = "sell_next" if api_kind == "판매" else "buy_next"
+    prev_key = "sell_prev" if market_kind == "판매 통합" else "buy_prev"
+    next_key = "sell_next" if market_kind == "판매 통합" else "buy_next"
     if nav[0].button("◀", key=prev_key, type="primary") and page > 1:
         st.session_state[page_key] = page - 1
         st.rerun()
@@ -1017,14 +1167,17 @@ if include_api:
         page_view,
         use_container_width=True,
         hide_index=True,
-        height=300,
-        key=f"api_df_{api_kind}_{api_sort}_{st.session_state.get('api_render_id', 0)}",
+        height=440,
+        key=f"market_df_{market_kind}_{st.session_state.get('api_render_id', 0)}",
         column_config={
             "색": st.column_config.Column("색", width="small"),
+            "출처": st.column_config.Column("출처", width="small"),
             "상태": st.column_config.Column("상태", width="small"),
             "스탯": st.column_config.Column("스탯", width="large"),
+            "가격": st.column_config.NumberColumn("가격", format="localized"),
             "코멘트": st.column_config.Column("코멘트", width="medium"),
             "프로필": st.column_config.LinkColumn("프로필", display_text="열기", width="small"),
+            "링크": st.column_config.LinkColumn("링크", display_text="열기", width="small"),
         },
     )
 

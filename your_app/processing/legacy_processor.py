@@ -150,7 +150,7 @@ COMPOSITE: Dict[str, List[str]] = {
     "전사": ["힘", "덱", "명"],
     "도적": ["덱", "럭"],
     "궁수": ["힘", "덱"],        # 가공 정의: 덱+인 → 힘+덱
-    "법사": ["인", "럭", "마"],    # 가공 정의: 인+럭+마
+    "법사": ["인", "럭"],
     "단도": ["힘", "덱", "럭"],
 }
 
@@ -158,7 +158,7 @@ COMPOSITE: Dict[str, List[str]] = {
 _COMPOSITE_MAP = {
     frozenset(["힘","덱","명"]): "전사_add",
     frozenset(["힘","덱"]): "궁수_add",
-    frozenset(["인","럭","마"]): "법사_add",
+    frozenset(["인","럭"]): "법사_add",
     frozenset(["덱","럭"]): "도적_add",
     frozenset(["힘","덱","럭"]): "단도_add",
 }
@@ -175,7 +175,7 @@ def _parse_condition(cond: str, base_stats: Dict[str, int]):
 
     가공 전용 규칙:
       - '인 10' 또는 '마 10' → (인+마) 추가합 = 10 - (기본인+기본마)
-      - '법사 n'            → (인+럭+마) 추가합 = n - (기본합)
+      - '법사 n'            → (인+럭) 추가합 = n - (기본합)
       - '법신 n'            → (인+럭+마) 추가합 == n   (기본 보정 없이 '추가값 그대로')
     """
     if not cond:
@@ -191,6 +191,9 @@ def _parse_condition(cond: str, base_stats: Dict[str, int]):
     if m:
         n = int(m.group(2))
         comp = ["힘","덱","명"]  # 전사 합
+        if n == 0:
+            flag = "cmp_dex_gte_acc" if m.group(1) == "신점" else "cmp_acc_gte_dex"
+            return (comp, 0), (flag, None)
         base_sum = sum(int(base_stats.get(x,0) or 0) for x in comp)
         flag = "cmp_dex_gte_acc" if m.group(1) == "신점" else "cmp_acc_gte_dex"
         return (comp, n - base_sum), (flag, None)
@@ -198,7 +201,10 @@ def _parse_condition(cond: str, base_stats: Dict[str, int]):
     m = re.fullmatch(r"(법지|법행)\s*(\d+)", t)
     if m:
         n = int(m.group(2))
-        comp = ["인","럭","마"]  # 법사 합
+        comp = ["인","럭"]  # 법사 합
+        if n == 0:
+            flag = "cmp_int_gte_luk" if m.group(1) == "법지" else "cmp_luk_gte_int"
+            return (comp, 0), (flag, None)
         base_sum = sum(int(base_stats.get(x,0) or 0) for x in comp)
         flag = "cmp_int_gte_luk" if m.group(1) == "법지" else "cmp_luk_gte_int"
         return (comp, n - base_sum), (flag, None)
@@ -227,14 +233,20 @@ def _parse_condition(cond: str, base_stats: Dict[str, int]):
     # 복합(가공 전용)
     if std_key in COMPOSITE:
         keys = COMPOSITE[std_key]
+        if val == 0:
+            return (keys, 0), None
         return (keys, val - _base_sum(keys)), None
 
     # 인/마 단일 입력도 (인+마)로 통일
     if std_key in ("인", "마"):
+        if val == 0:
+            return ([std_key], 0), None
         keys = ["인", "마"]
         return (keys, val - _base_sum(keys)), None
 
     # 단일 키
+    if val == 0:
+        return ([std_key], 0), None
     base_val = int(base_stats.get(std_key, 0) or 0)
     return ([std_key], val - base_val), None
 

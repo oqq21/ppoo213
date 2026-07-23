@@ -20,6 +20,8 @@ def handle_simple(raw: str, base: Dict[str,int], sem: Semantics) -> ProcResult:
     m = re.fullmatch(r"([가-힣A-Za-z]+)\s*([-+]?\d+)", raw.strip())
     if not m: return (None, None)
     k, v = m.group(1), int(m.group(2))
+    if v == 0:
+        return (([k], 0), None)
     # 인/마 단일 입력도 (인+마) 합으로 본다는 기존 규칙까지 반영
     if k in ("인","마"):
         keys = ["인","마"]
@@ -39,9 +41,11 @@ def handle_hap(raw: str, base: Dict[str,int], sem: Semantics) -> ProcResult:
         "전사": ["힘","덱","명"],
         "도적": ["덱","럭"],
         "궁수": ["힘","덱"],
-        "법사": ["인","럭","마"],
+        "법사": ["인","럭"],
         "단도": ["힘","덱","럭"],
     }[job]
+    if v == 0:
+        return ((comp, 0), None)
     base_sum = sum(int(base.get(x,0) or 0) for x in comp)
     return ((comp, v - base_sum), None)
 
@@ -60,6 +64,8 @@ def handle_shin_point(raw: str, base: Dict[str,int], sem: Semantics):
     if not m: return (None,None)
     v = int(m.group(1))
     comp = ["힘","덱","명"]
+    if v == 0:
+        return ((comp, 0), ("cmp_dex_gte_acc", None))
     base_sum = sum(int(base.get(x,0) or 0) for x in comp)
     return ((comp, v - base_sum), ("cmp_dex_gte_acc", None))
 
@@ -70,6 +76,8 @@ def handle_shin_min(raw: str, base: Dict[str,int], sem: Semantics):
     if not m: return (None,None)
     v = int(m.group(1))
     comp = ["힘","덱","명"]
+    if v == 0:
+        return ((comp, 0), ("cmp_acc_gte_dex", None))
     base_sum = sum(int(base.get(x,0) or 0) for x in comp)
     return ((comp, v - base_sum), ("cmp_acc_gte_dex", None))
 
@@ -79,7 +87,9 @@ def handle_beop_ji(raw: str, base: Dict[str,int], sem: Semantics):
     m = re.fullmatch(r"법지\s*(\d+)", raw.strip())
     if not m: return (None,None)
     v = int(m.group(1))
-    comp = ["럭","마"]
+    comp = ["인","럭"]
+    if v == 0:
+        return ((comp, 0), ("cmp_int_gte_luk", None))
     base_sum = sum(int(base.get(x,0) or 0) for x in comp)
     return ((comp, v - base_sum), ("cmp_int_gte_luk", None))
 
@@ -89,7 +99,9 @@ def handle_beop_haeng(raw: str, base: Dict[str,int], sem: Semantics):
     m = re.fullmatch(r"법행\s*(\d+)", raw.strip())
     if not m: return (None,None)
     v = int(m.group(1))
-    comp = ["럭","마"]
+    comp = ["인","럭"]
+    if v == 0:
+        return ((comp, 0), ("cmp_luk_gte_int", None))
     base_sum = sum(int(base.get(x,0) or 0) for x in comp)
     return ((comp, v - base_sum), ("cmp_luk_gte_int", None))
 
