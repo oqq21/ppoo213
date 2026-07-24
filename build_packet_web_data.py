@@ -14,7 +14,9 @@ from openpyxl import load_workbook
 
 KST = timezone(timedelta(hours=9))
 ROOT = Path(__file__).resolve().parent
-DEFAULT_SOURCE_ROOT = ROOT.parent
+WORKSPACE_ROOT = ROOT.parents[1]
+RESOURCE_DIR = WORKSPACE_ROOT / "자료"
+DATA_DIR = WORKSPACE_ROOT / "data"
 
 STAT_INDEXES = {
     "upgrade_left": 0,
@@ -48,6 +50,8 @@ ITEMP_COLUMNS = {
     "회피": "EVA",
     "이속": "SPEED",
     "점프": "JUMP",
+    "HP": "HP",
+    "MP": "MP",
 }
 
 GEM_STAT_SUFFIXES = {
@@ -137,6 +141,7 @@ def load_item_catalog(path: Path) -> tuple[dict[int, dict[str, Any]], dict[str, 
             "itemCode", "itemName", "gender", "reqLevel", "category",
             "공", "마", "힘", "덱", "인", "럭", "명",
             "물방", "마방", "이속", "점프", "회피", "직업",
+            "HP", "MP",
         ]
         for row in rows:
             code = row[indexes["itemCode"]] if indexes["itemCode"] < len(row) else None
@@ -366,21 +371,21 @@ def write_site_item_file(path: Path, sheets: dict[str, pd.DataFrame]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="패킷 SQLite를 Streamlit용 장비 parquet로 변환합니다.")
-    parser.add_argument("--itemp", type=Path, default=DEFAULT_SOURCE_ROOT / "itemp.xlsx")
+    parser.add_argument("--itemp", type=Path, default=RESOURCE_DIR / "itemp.xlsx")
     parser.add_argument(
         "--gem-prices",
         type=Path,
-        default=DEFAULT_SOURCE_ROOT / "주문서_광석_판매통계.xlsx",
+        default=RESOURCE_DIR / "주문서_광석_판매통계.xlsx",
     )
     parser.add_argument(
         "--active-db",
         type=Path,
-        default=DEFAULT_SOURCE_ROOT / "데이터저장" / "data" / "store" / "market_active.sqlite",
+        default=DATA_DIR / "store" / "market_active.sqlite",
     )
     parser.add_argument(
         "--completed-db",
         type=Path,
-        default=DEFAULT_SOURCE_ROOT / "데이터저장" / "data" / "store" / "market_completed.sqlite",
+        default=DATA_DIR / "store" / "market_completed.sqlite",
     )
     parser.add_argument("--output-dir", type=Path, default=ROOT)
     return parser.parse_args()

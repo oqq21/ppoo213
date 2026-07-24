@@ -9,6 +9,9 @@ from your_app.processing.packet_store import (
     ACTUAL_STATS,
     deduplicate_active_completed,
     filter_packet_rows,
+    format_packet_time,
+    item_color_key,
+    item_color_score,
     packet_view,
     search_packet_data,
 )
@@ -70,6 +73,43 @@ class PacketRuleTests(unittest.TestCase):
         result = filter_packet_rows(frame, ["힘0"])
         self.assertEqual(result["itemCode"].tolist(), [1_000_001])
 
+    def test_hp_mp_conditions_use_total_for_positive_and_additional_for_zero(self):
+        frame = pd.DataFrame([
+            sample_row(
+                total_HP=120,
+                base_HP=100,
+                add_HP=20,
+                total_MP=80,
+                base_MP=80,
+                add_MP=0,
+            ),
+            sample_row(
+                itemCode=1_000_002,
+                total_HP=100,
+                base_HP=100,
+                add_HP=0,
+                total_MP=90,
+                base_MP=80,
+                add_MP=10,
+            ),
+        ])
+        self.assertEqual(
+            filter_packet_rows(frame, ["HP120"])["itemCode"].tolist(),
+            [1_000_001],
+        )
+        self.assertEqual(
+            filter_packet_rows(frame, ["HP0"])["itemCode"].tolist(),
+            [1_000_002],
+        )
+        self.assertEqual(
+            filter_packet_rows(frame, ["MP80"])["itemCode"].tolist(),
+            [1_000_001],
+        )
+        self.assertEqual(
+            filter_packet_rows(frame, ["MP0"])["itemCode"].tolist(),
+            [1_000_001],
+        )
+
     def test_packet_view_rounds_prices_to_man_and_colors_status(self):
         frame = pd.DataFrame([
             sample_row(
@@ -96,6 +136,34 @@ class PacketRuleTests(unittest.TestCase):
         result = packet_view(frame)
         self.assertEqual(result.at[0, "추가스탯"], "덱21 물방-1")
 
+    def test_item_color_uses_additional_stats_and_hp_mp_tenths(self):
+        row = pd.Series(sample_row(
+            add_DEX=20,
+            add_HP=29,
+            add_MP=19,
+        ))
+        self.assertEqual(item_color_score(row), 23)
+        self.assertEqual(item_color_key(item_color_score(row)), "purple")
+
+    def test_item_color_boundaries(self):
+        expected = {
+            -1: "gray",
+            0: "white",
+            5: "white",
+            6: "blue",
+            22: "blue",
+            23: "purple",
+            39: "purple",
+            40: "yellow",
+            54: "yellow",
+            55: "lime",
+            69: "lime",
+            70: "red",
+        }
+        for score, color in expected.items():
+            with self.subTest(score=score):
+                self.assertEqual(item_color_key(score), color)
+
     def test_gems_display_actual_stat_values(self):
         frame = pd.DataFrame([
             sample_row(
@@ -116,9 +184,16 @@ class PacketRuleTests(unittest.TestCase):
                 event_time="2026-07-22 10:00:00",
             )
         ])
-        result, count = deduplicate_active_completed(active, completed)
+        result, completed_result, count = deduplicate_active_completed(
+            active,
+            completed,
+        )
         self.assertEqual(count, 1)
         self.assertTrue(result.empty)
+        self.assertEqual(
+            completed_result.at[0, "_sale_duration_minutes"],
+            2 * 24 * 60,
+        )
 
     def test_completed_does_not_remove_active_after_three_days(self):
         active = pd.DataFrame([sample_row()])
@@ -130,9 +205,62 @@ class PacketRuleTests(unittest.TestCase):
                 event_time="2026-07-24 10:00:00",
             )
         ])
-        result, count = deduplicate_active_completed(active, completed)
+        result, completed_result, count = deduplicate_active_completed(
+            active,
+            completed,
+        )
         self.assertEqual(count, 0)
         self.assertEqual(len(result), 1)
+        self.assertTrue(
+            pd.isna(completed_result.at[0, "_sale_duration_minutes"])
+        )
+
+    def test_identical_listings_pair_with_nearest_prior_active(self):
+        active = pd.DataFrame([
+            sample_row(captured_at="2026-07-20 10:00:00"),
+            sample_row(captured_at="2026-07-20 11:00:00"),
+        ])
+        completed = pd.DataFrame([
+            sample_row(
+                status="completed",
+                captured_at="2026-07-20 10:30:00",
+                internal_time="2026-07-21 10:00:00",
+            ),
+            sample_row(
+                status="completed",
+                captured_at="2026-07-20 11:40:00",
+                internal_time="2026-07-21 11:00:00",
+            ),
+        ])
+        active_result, completed_result, count = (
+            deduplicate_active_completed(active, completed)
+        )
+        self.assertTrue(active_result.empty)
+        self.assertEqual(count, 2)
+        self.assertEqual(
+            completed_result["_sale_duration_minutes"].tolist(),
+            [30, 40],
+        )
+
+    def test_completed_time_shows_minutes_or_hours_to_sale(self):
+        minute_row = pd.Series(sample_row(
+            status="completed",
+            captured_at="2026-07-20 10:32:00",
+            _sale_duration_minutes=32,
+        ))
+        hour_row = pd.Series(sample_row(
+            status="completed",
+            captured_at="2026-07-20 13:05:00",
+            _sale_duration_minutes=185,
+        ))
+        self.assertEqual(
+            format_packet_time(minute_row),
+            "2026-07-20 10:32 (32분)",
+        )
+        self.assertEqual(
+            format_packet_time(hour_row),
+            "2026-07-20 13:05 (3시간)",
+        )
 
 
 class PacketDataIntegrationTests(unittest.TestCase):

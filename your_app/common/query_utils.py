@@ -75,9 +75,26 @@ def _ensure_cache_columns(df):
         df["itemName_choseong"] = df["itemName"].map(lambda s: to_choseong(s))
 
 def _mask_for_literal(df, token: str):
-    is_ch = is_choseong_query(token)
-    cq = to_choseong(token) if is_ch else token.replace(" ", "")
+    raw = str(token or "").strip()
+    anchored_start = raw.startswith("@")
+    anchored_end = raw.endswith("@")
+    if anchored_start:
+        raw = raw[1:]
+    if anchored_end and raw:
+        raw = raw[:-1]
+    raw = raw.strip()
+    if not raw:
+        return pd.Series(False, index=df.index)
+
+    is_ch = is_choseong_query(raw)
+    cq = to_choseong(raw) if is_ch else raw.replace(" ", "")
     col = "itemName_choseong" if is_ch else "itemName_nospace"
+    if anchored_start and anchored_end:
+        return df[col].eq(cq)
+    if anchored_start:
+        return df[col].str.startswith(cq, na=False)
+    if anchored_end:
+        return df[col].str.endswith(cq, na=False)
     return df[col].str.contains(cq, na=False, regex=False)
 
 def mask_for_query(df, q: str):

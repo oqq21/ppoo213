@@ -23,10 +23,11 @@ def _copy_atomic(src: Path, dst: Path) -> None:
 
 def _find_default_source(base_dir: Path) -> Path | None:
     cwd = Path.cwd()
+    workspace = base_dir.parents[1]
     candidates = [
         cwd / "요약본.parquet",
+        workspace / "자료" / "요약본.parquet",
         base_dir / "요약본.parquet",
-        base_dir.parent / "요약본.parquet",
     ]
     for p in candidates:
         if p.exists():

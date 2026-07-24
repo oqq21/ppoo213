@@ -57,20 +57,17 @@ def _first_existing(candidates: list[Path]) -> Path | None:
 
 
 def _default_sources(base_dir: Path) -> dict[str, Path | None]:
-    parent = base_dir.parent
-    work = parent / "ppoo213_work"
+    github_dir = base_dir.parent
+    workspace = github_dir.parent
     return {
         "요약본.parquet": _first_existing([
-            parent / "요약본.parquet",
-            work / "요약본.parquet",
+            workspace / "자료" / "요약본.parquet",
             base_dir / "요약본.parquet",
         ]),
         "packet_active.parquet": _first_existing([
-            work / "packet_active.parquet",
             base_dir / "packet_active.parquet",
         ]),
         "packet_completed.parquet": _first_existing([
-            work / "packet_completed.parquet",
             base_dir / "packet_completed.parquet",
         ]),
     }

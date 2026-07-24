@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -86,6 +85,20 @@ GEM_OPTION_LABELS = {
     10: ("럭", (2, 3, 5)),
     11: ("덱", (1, 3, 5)),
 }
+
+ITEM_COLOR_RANGES = (
+    (-1, "gray"),
+    (5, "white"),
+    (22, "blue"),
+    (39, "purple"),
+    (54, "yellow"),
+    (69, "lime"),
+)
+
+ITEM_COLOR_STATS = (
+    "STR", "DEX", "INT", "LUK", "PAD", "PDD", "MDD",
+    "ACC", "EVA", "SPEED", "JUMP",
+)
 
 
 def read_packet_rows(path: Path, item_codes: Iterable[int]) -> pd.DataFrame:
@@ -193,14 +206,28 @@ def deduplicate_active_completed(
     active: pd.DataFrame,
     completed: pd.DataFrame,
     days: int = 3,
-) -> tuple[pd.DataFrame, int]:
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    completed_result = completed.copy().reset_index(drop=True)
+    completed_result["_sale_duration_minutes"] = pd.Series(
+        pd.NA,
+        index=completed_result.index,
+        dtype="Int64",
+    )
     if active.empty or completed.empty:
-        return active, 0
+        return active.copy().reset_index(drop=True), completed_result, 0
 
     active_work = active.copy().reset_index(drop=True)
-    completed_work = completed.copy().reset_index(drop=True)
+    completed_work = completed_result
     active_work["_internal_date"] = pd.to_datetime(active_work["internal_time"], errors="coerce").dt.date
     completed_work["_internal_date"] = pd.to_datetime(completed_work["internal_time"], errors="coerce").dt.date
+    active_work["_captured_time"] = pd.to_datetime(
+        active_work["captured_at"],
+        errors="coerce",
+    )
+    completed_work["_captured_time"] = pd.to_datetime(
+        completed_work["captured_at"],
+        errors="coerce",
+    )
 
     active_groups: dict[tuple, list[int]] = defaultdict(list)
     completed_groups: dict[tuple, list[int]] = defaultdict(list)
@@ -214,9 +241,10 @@ def deduplicate_active_completed(
         available = sorted(
             active_groups.get(fingerprint, []),
             key=lambda index: (
-                date.min
-                if pd.isna(active_work.at[index, "_internal_date"])
-                else active_work.at[index, "_internal_date"]
+                pd.isna(active_work.at[index, "_captured_time"]),
+                pd.Timestamp.max.value
+                if pd.isna(active_work.at[index, "_captured_time"])
+                else active_work.at[index, "_captured_time"].value,
             ),
         )
         if not available:
@@ -224,15 +252,21 @@ def deduplicate_active_completed(
         for completed_index in sorted(
             completed_indexes,
             key=lambda index: (
-                date.min
-                if pd.isna(completed_work.at[index, "_internal_date"])
-                else completed_work.at[index, "_internal_date"]
+                pd.isna(completed_work.at[index, "_captured_time"]),
+                pd.Timestamp.max.value
+                if pd.isna(completed_work.at[index, "_captured_time"])
+                else completed_work.at[index, "_captured_time"].value,
             ),
         ):
             completed_date = completed_work.at[completed_index, "_internal_date"]
             if pd.isna(completed_date):
                 continue
             chosen = None
+            fallback = None
+            completed_captured = completed_work.at[
+                completed_index,
+                "_captured_time",
+            ]
             for position in range(len(available) - 1, -1, -1):
                 active_date = active_work.at[available[position], "_internal_date"]
                 if pd.isna(active_date):
@@ -241,15 +275,53 @@ def deduplicate_active_completed(
                 # 어느 쪽이 앞설지 고정하지 않고 날짜 절대차를 사용한다.
                 gap = abs((completed_date - active_date).days)
                 if gap <= days:
-                    chosen = position
-                    break
+                    # 유효한 과거 Active가 없을 때의 기존 중복 제거용 후보.
+                    # 역순 순회라 마지막에 남는 값이 가장 이른 후보가 된다.
+                    fallback = position
+                    active_captured = active_work.at[
+                        available[position],
+                        "_captured_time",
+                    ]
+                    if (
+                        not pd.isna(active_captured)
+                        and not pd.isna(completed_captured)
+                        and active_captured <= completed_captured
+                    ):
+                        # captured_at 오름차순의 역순이므로 판매 직전의
+                        # 가장 가까운 Active가 처음 선택된다.
+                        chosen = position
+                        break
+            if chosen is None:
+                chosen = fallback
             if chosen is not None:
-                remove.add(available.pop(chosen))
+                active_index = available.pop(chosen)
+                remove.add(active_index)
+                active_captured = active_work.at[active_index, "_captured_time"]
+                if (
+                    not pd.isna(active_captured)
+                    and not pd.isna(completed_captured)
+                    and completed_captured >= active_captured
+                ):
+                    duration_seconds = (
+                        completed_captured - active_captured
+                    ).total_seconds()
+                    completed_work.at[
+                        completed_index,
+                        "_sale_duration_minutes",
+                    ] = int(duration_seconds // 60)
             if not available:
                 break
 
-    result = active_work.drop(index=list(remove), errors="ignore")
-    return result.drop(columns=["_internal_date"], errors="ignore").reset_index(drop=True), len(remove)
+    active_result = active_work.drop(index=list(remove), errors="ignore")
+    active_result = active_result.drop(
+        columns=["_internal_date", "_captured_time"],
+        errors="ignore",
+    ).reset_index(drop=True)
+    completed_result = completed_work.drop(
+        columns=["_internal_date", "_captured_time"],
+        errors="ignore",
+    ).reset_index(drop=True)
+    return active_result, completed_result, len(remove)
 
 
 def search_packet_data(
@@ -260,7 +332,11 @@ def search_packet_data(
 ) -> tuple[pd.DataFrame, int]:
     active = filter_packet_rows(read_packet_rows(active_path, item_codes), tokens)
     completed = filter_packet_rows(read_packet_rows(completed_path, item_codes), tokens)
-    active, duplicate_count = deduplicate_active_completed(active, completed, days=3)
+    active, completed, duplicate_count = deduplicate_active_completed(
+        active,
+        completed,
+        days=3,
+    )
     combined = pd.concat([active, completed], ignore_index=True) if not active.empty or not completed.empty else pd.DataFrame()
     if not combined.empty:
         # 화면 정렬은 패킷 수신시간, 3일 중복 판정은 위의 internal_time을 사용한다.
@@ -295,6 +371,35 @@ def format_gem_text(row: pd.Series) -> str:
     return ", ".join(parts)
 
 
+def item_color_score(row: pd.Series) -> int:
+    """장비의 추가스탯 색상 점수. HP/MP는 10당 1점으로 환산한다."""
+    score = sum(int(row.get(f"add_{stat}", 0) or 0) for stat in ITEM_COLOR_STATS)
+    score += int(int(row.get("add_HP", 0) or 0) / 10)
+    score += int(int(row.get("add_MP", 0) or 0) / 10)
+    return score
+
+
+def item_color_key(score: int) -> str:
+    for upper, color in ITEM_COLOR_RANGES:
+        if int(score) <= upper:
+            return color
+    return "red"
+
+
+def format_packet_time(row: pd.Series) -> str:
+    captured = pd.to_datetime(row.get("captured_at"), errors="coerce")
+    if pd.isna(captured):
+        return ""
+    displayed = captured.strftime("%Y-%m-%d %H:%M")
+    duration = row.get("_sale_duration_minutes")
+    if str(row.get("status", "")).lower() != "completed" or pd.isna(duration):
+        return displayed
+    minutes = max(0, int(duration))
+    if minutes < 60:
+        return f"{displayed} ({minutes}분)"
+    return f"{displayed} ({minutes // 60}시간)"
+
+
 def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame()
@@ -310,8 +415,9 @@ def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
             "active": "🔵 Active",
             "completed": "🟣 Completed",
         }).fillna(work["status"]),
-        "패킷시간": pd.to_datetime(work["captured_at"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M"),
+        "패킷시간": work.apply(format_packet_time, axis=1),
         "아이템": work["itemName"],
+        "_아이템색": work.apply(lambda row: item_color_key(item_color_score(row)), axis=1),
         "판매가(만)": _to_man("unit_price"),
         # 저장된 옛 등급명 대신 옵션코드로 실제 적용 스탯을 표시한다.
         "보석": work.apply(format_gem_text, axis=1),

@@ -14,10 +14,10 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-24-release-v2"
+APP_BUILD = "2026-07-25-query-boundaries-v1"
 
 from your_app.common.data_loader import load_item_data
-from your_app.common.query_utils import mask_for_query
+from your_app.common import query_utils as _query_utils
 from your_app.domain.grouping import group_by_sgr
 from your_app.api.client import (
     build_params,
@@ -40,10 +40,15 @@ if getattr(_packet_store, "_PP213_APP_BUILD", "") != APP_BUILD:
 if getattr(_remote_data, "_PP213_APP_BUILD", "") != APP_BUILD:
     _remote_data = importlib.reload(_remote_data)
     _remote_data._PP213_APP_BUILD = APP_BUILD
+if getattr(_query_utils, "_PP213_APP_BUILD", "") != APP_BUILD:
+    _query_utils = importlib.reload(_query_utils)
+    _query_utils._PP213_APP_BUILD = APP_BUILD
 
 packet_view = _packet_store.packet_view
 search_packet_data = _packet_store.search_packet_data
+item_color_key = _packet_store.item_color_key
 ensure_data_snapshot = _remote_data.ensure_data_snapshot
+mask_for_query = _query_utils.mask_for_query
 
 PREFERRED_PARQUET = ["요약본.parquet"]
 DATA_CACHE_DIR = Path(tempfile.gettempdir()) / "ppoo213-data"
@@ -189,10 +194,40 @@ def _emph_price(v) -> str:
     return s
 
 
+ITEM_NAME_COLORS = {
+    "gray": "#6b7280",
+    "white": "#ffffff",
+    "blue": "#1677ff",
+    "purple": "#9333ea",
+    "yellow": "#e3ad00",
+    "lime": "#57b51b",
+    "red": "#e11d48",
+}
+
+
+def _item_name_css(color_key: str) -> str:
+    key = str(color_key or "").lower()
+    key = {"green": "lime", "lightgreen": "lime"}.get(key, key)
+    color = ITEM_NAME_COLORS.get(key, ITEM_NAME_COLORS["white"])
+    outline = ""
+    if key not in ITEM_NAME_COLORS or key == "white":
+        outline = (
+            "text-shadow: -1px -1px 0 #4b5563, 1px -1px 0 #4b5563, "
+            "-1px 1px 0 #4b5563, 1px 1px 0 #4b5563;"
+        )
+    return f"color: {color}; font-weight: 800; {outline}"
+
+
 def _style_status_rows(frame: pd.DataFrame):
-    """상태를 색과 배경으로 빠르게 구분할 수 있게 한다."""
-    if frame is None or frame.empty or "상태" not in frame.columns:
+    """행의 상태 배경은 유지하면서 아이템명 글자에만 장비 색상을 입힌다."""
+    if frame is None or frame.empty:
         return frame
+    display = frame.copy()
+    item_colors = (
+        display.pop("_아이템색")
+        if "_아이템색" in display.columns
+        else None
+    )
 
     def _row_style(row: pd.Series) -> list[str]:
         status = str(row.get("상태", ""))
@@ -208,7 +243,17 @@ def _style_status_rows(frame: pd.DataFrame):
             style = ""
         return [style] * len(row)
 
-    return frame.style.apply(_row_style, axis=1)
+    styled = display.style
+    if "상태" in display.columns:
+        styled = styled.apply(_row_style, axis=1)
+    if item_colors is not None and "아이템" in display.columns:
+        name_styles = [_item_name_css(value) for value in item_colors]
+        styled = styled.apply(
+            lambda _column: name_styles,
+            axis=0,
+            subset=["아이템"],
+        )
+    return styled
 
 
 MY_PROFILE_ORDER = {
@@ -368,6 +413,7 @@ def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
         "색": d.apply(_api_color_cell, axis=1),
         "상태": d.get("tradeStatus", "").map(lambda x: "🟢 판매중" if bool(x) else "⚫ 판매완료") if "tradeStatus" in d.columns else "",
         "아이템": d.get("itemName", ""),
+        "_아이템색": d.get("color", "white"),
         "가격(만)": d.get("itemPrice", "").map(_emph_price) if "itemPrice" in d.columns else "",
         "스탯": d.get(opt_col, "").map(_normalize_option) if opt_col in d.columns else "",
         "코멘트": d.get("comment", "") if "comment" in d.columns else d.get("comment", ""),
@@ -394,10 +440,12 @@ def _proc_view_df(rows: list[dict]) -> pd.DataFrame:
         f"{s} {mark}" if mark else s
         for s, mark in zip(status, df.get("url", "").map(_my_account_mark) if "url" in df.columns else [""] * len(df))
     ]
+    color_keys = df.get("stats", "").map(_item_color_from_stat_text)
     out = pd.DataFrame({
         "일전": df.get("days_ago", ""),
         "상태": status,
         "아이템": df.get("item", ""),
+        "_아이템색": color_keys,
         "가격(만)": df.get("price", "").map(_emph_price) if "price" in df.columns else "",
         "판매자": df.get("seller", ""),
         "스탯": df.get("stats", ""),
@@ -422,6 +470,18 @@ def _parse_stat_text(value) -> dict[str, int]:
         canonical = _STAT_LABEL_ALIASES.get(name, name)
         result[canonical] = result.get(canonical, 0) + int(raw_number)
     return result
+
+
+def _item_color_from_stat_text(value) -> str:
+    stats = _parse_stat_text(value)
+    regular = (
+        "힘", "덱", "인", "럭", "공", "명", "회피",
+        "이속", "점프", "물방", "마방",
+    )
+    score = sum(int(stats.get(name, 0)) for name in regular)
+    score += int(int(stats.get("HP", 0)) / 10)
+    score += int(int(stats.get("MP", 0)) / 10)
+    return item_color_key(score)
 
 
 def _base_stats_for_item(df_items: pd.DataFrame, item_name: str) -> dict[str, int]:
@@ -740,21 +800,34 @@ def _apply_api_post_filters(df: pd.DataFrame, tokens: list[str], current_query: 
     q = (current_query or "").strip()
     if q:
         def _norm_name(s: str) -> str:
-            raw = str(s or "").lower()
+            raw = str(s or "").lower().replace("@", "")
             paren_parts = re.findall(r"\(([^)]*)\)", raw)
             main = re.sub(r"\([^)]*\)", "", raw)
+
             def _strip(x: str) -> str:
-                x = x.replace("남자", "").replace("여자", "").replace("공용", "").replace("남", "").replace("여", "")
+                x = (
+                    x.replace("남자", "")
+                    .replace("여자", "")
+                    .replace("공용", "")
+                    .replace("남", "")
+                    .replace("여", "")
+                )
                 return re.sub(r"[^0-9a-zA-Z가-힣]+", "", x)
-            base = _strip(main)
-            extra = _strip("".join(paren_parts))
-            return base + extra
+
+            return _strip(main) + _strip("".join(paren_parts))
+
         q_norm = _norm_name(q)
         try:
-            name_norm = d["itemName"].astype(str).map(_norm_name)
-            keep_name = name_norm.str.contains(q_norm, regex=False)
+            query_names = pd.DataFrame(
+                {"itemName": d["itemName"].astype(str)},
+                index=d.index,
+            )
+            keep_name = mask_for_query(query_names, q)
         except Exception:
-            keep_name = d["itemName"].astype(str).str.contains(q, regex=False)
+            keep_name = d["itemName"].astype(str).str.contains(
+                q_norm,
+                regex=False,
+            )
         d = d[keep_name]
         if d.empty:
             return pd.DataFrame()
@@ -1044,7 +1117,16 @@ with col_left:
 
     col_q, col_s1, col_s2, col_s3 = st.columns([3, 1, 1, 1])
     with col_q:
-        query = st.text_input("검색어", key="query", on_change=_on_query_change)
+        query = st.text_input(
+            "검색어",
+            key="query",
+            on_change=_on_query_change,
+            help=(
+                "검색어@: 해당 글자로 끝나는 이름 · "
+                "@검색어: 해당 글자로 시작하는 이름 · "
+                "@검색어@: 이름 전체가 정확히 일치"
+            ),
+        )
     with col_s1:
         stat1 = st.text_input("스탯1", key="stat1", on_change=_trigger_search)
     with col_s2:
