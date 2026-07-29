@@ -107,6 +107,37 @@ class RemoteDataTests(unittest.TestCase):
                 self.assertEqual(snapshot.path(name).read_bytes(), expected)
             self.assertTrue((Path(temp) / "test-version" / "manifest.json").exists())
 
+    def test_direct_manifest_avoids_release_api(self):
+        payloads = {
+            name: f"direct:{name}".encode("utf-8")
+            for name in remote_data.DATA_FILES
+        }
+        manifest = _manifest("direct-version", payloads)
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append(url)
+            if url.endswith("/manifest.json"):
+                return _Response(json_value=manifest)
+            for name, info in manifest["files"].items():
+                if info["asset"] in url:
+                    return _Response(data=payloads[name])
+            raise AssertionError(url)
+
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "your_app.common.remote_data.requests.get",
+            side_effect=fake_get,
+        ):
+            snapshot = remote_data.ensure_data_snapshot(
+                temp,
+                check_interval=0,
+                release_api="https://api.github.com/repos/test/repo/releases/tags/latest",
+                manifest_url="https://example.invalid/manifest.json",
+            )
+
+        self.assertEqual(snapshot.version, "direct-version")
+        self.assertFalse(any("api.github.com" in url for url in calls))
+
     def test_reuses_unchanged_file_blob_between_versions(self):
         payloads_v1 = {
             name: f"v1:{name}".encode("utf-8")
