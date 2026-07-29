@@ -29,6 +29,7 @@ DEFAULT_REMOTE = "origin"
 DEFAULT_TAG = "web-data-latest"
 DEFAULT_TARGET = "main"
 API_ROOT = "https://api.github.com"
+STABLE_MANIFEST_NAME = "manifest.json"
 
 
 def _run(args: list[str], cwd: Path, *, input_text: str = "") -> subprocess.CompletedProcess:
@@ -303,9 +304,11 @@ def main() -> int:
             not args.force
             and current_pointer in str(release.get("body") or "")
             and manifest_name in assets
+            and STABLE_MANIFEST_NAME in assets
         ):
             keep_names = {
                 manifest_name,
+                STABLE_MANIFEST_NAME,
                 *(str(info["asset"]) for info in manifest["files"].values()),
             }
             for name, asset in list(assets.items()):
@@ -332,6 +335,21 @@ def main() -> int:
                 "application/json",
             )
             print(f"[UPLOAD] {manifest_name}")
+            existing_stable_manifest = assets.get(STABLE_MANIFEST_NAME)
+            if existing_stable_manifest:
+                _delete_asset(
+                    session,
+                    slug,
+                    int(existing_stable_manifest["id"]),
+                )
+            assets[STABLE_MANIFEST_NAME] = _upload_asset(
+                session,
+                release,
+                STABLE_MANIFEST_NAME,
+                manifest_path,
+                "application/json",
+            )
+            print(f"[UPLOAD] {STABLE_MANIFEST_NAME}")
 
         _request(
             session,
@@ -342,6 +360,7 @@ def main() -> int:
 
         keep_names = {
             manifest_name,
+            STABLE_MANIFEST_NAME,
             *(str(info["asset"]) for info in manifest["files"].values()),
         }
         for name, asset in list(assets.items()):

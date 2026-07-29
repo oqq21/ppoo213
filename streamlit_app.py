@@ -1021,7 +1021,7 @@ st.markdown(
 
 excel_file = BASE_DIR / "item.xlsx"
 try:
-    data_snapshot = ensure_data_snapshot(DATA_CACHE_DIR, check_interval=120)
+    data_snapshot = ensure_data_snapshot(DATA_CACHE_DIR, check_interval=60 * 60)
 except Exception as exc:
     st.error(f"최신 데이터 스냅샷을 받지 못했습니다: {exc}")
     st.stop()
@@ -1043,7 +1043,7 @@ df_items = _load_items(str(excel_file))
 
 def _watch_remote_data() -> None:
     try:
-        latest = ensure_data_snapshot(DATA_CACHE_DIR, check_interval=120)
+        latest = ensure_data_snapshot(DATA_CACHE_DIR, check_interval=60 * 60)
     except Exception:
         return
     if latest.version == data_snapshot.version:
