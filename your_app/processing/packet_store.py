@@ -517,12 +517,12 @@ def format_packet_time(row: pd.Series) -> str:
     now = pd.Timestamp.now(tz=captured.tz)
     seconds = max(0, int((now - captured).total_seconds()))
     if seconds < 60:
-        return "방금 전"
+        return "방금전"
     if seconds < 3600:
-        return f"{seconds // 60}분 전"
+        return f"{seconds // 60}분전"
     if seconds < 86_400:
-        return f"{seconds // 3600}시간 전"
-    return f"{seconds // 86_400}일 전"
+        return f"{seconds // 3600}시간전"
+    return f"{seconds // 86_400}일전"
 
 
 def format_sale_duration(row: pd.Series) -> str:
@@ -533,8 +533,8 @@ def format_sale_duration(row: pd.Series) -> str:
     if minutes < 60:
         return f"{minutes}분"
     if minutes < 1_440:
-        return f"{minutes // 60}시간 {minutes % 60}분"
-    return f"{minutes // 1_440}일 {minutes % 1_440 // 60}시간"
+        return f"{minutes // 60}시간"
+    return f"{minutes // 1_440}일"
 
 
 def packet_view(
