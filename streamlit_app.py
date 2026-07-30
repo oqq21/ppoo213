@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-30-rebalance-v1"
+APP_BUILD = "2026-07-30-packet-table-v2"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -237,7 +237,20 @@ def _style_status_rows(frame: pd.DataFrame):
         else None
     )
 
-    styled = display.style
+    styled = display.style.set_properties(
+        **{
+            "font-size": "16px",
+            "font-weight": "700",
+        }
+    ).set_table_styles([
+        {
+            "selector": "th",
+            "props": [
+                ("font-size", "15px"),
+                ("font-weight", "800"),
+            ],
+        },
+    ])
     if "상태" in display.columns:
         status_styles = []
         for value in display["상태"]:
@@ -1380,19 +1393,47 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
         _style_status_rows(view),
         use_container_width=True,
         hide_index=True,
-        height=440,
+        height=520,
+        row_height=44,
+        column_order=[
+            "상태",
+            "패킷시간",
+            "판매소요",
+            "아이템",
+            "추가스탯",
+            "판매가(만)",
+            "대략시세(만)",
+            "보석",
+            "보석비(원가, 만)",
+            "인정보석가치(90%, 만)",
+            "찐판매가(만)",
+            "업횟",
+            "작횟",
+        ],
         column_config={
             "상태": st.column_config.Column("상태", width="small"),
-            "패킷시간": st.column_config.Column("패킷시간", width="medium"),
+            "패킷시간": st.column_config.Column("패킷시간", width="small"),
             "판매소요": st.column_config.Column("판매소요", width="small"),
-            "추가스탯": st.column_config.Column("추가스탯", width="large"),
-            "판매가(만)": st.column_config.NumberColumn("판매가(만)", format="localized"),
-            "대략시세(만)": st.column_config.NumberColumn("대략시세(만)", format="localized"),
-            "보석": st.column_config.Column("보석", width="small"),
-            "보석비(원가, 만)": st.column_config.NumberColumn("보석비(원가, 만)", format="localized"),
-            "인정보석가치(90%, 만)": st.column_config.NumberColumn("인정보석가치(90%, 만)", format="localized"),
-            "찐판매가(만)": st.column_config.NumberColumn("찐판매가(만)", format="localized"),
-            "추가스탯": st.column_config.Column("추가스탯", width="large"),
+            "아이템": st.column_config.Column("아이템", width="medium"),
+            "추가스탯": st.column_config.Column("추가스탯", width="medium"),
+            "판매가(만)": st.column_config.NumberColumn(
+                "판매가(만)", format="localized", width="small"
+            ),
+            "대략시세(만)": st.column_config.NumberColumn(
+                "대략시세(만)", format="localized", width="small"
+            ),
+            "보석": st.column_config.Column("보석", width="medium"),
+            "보석비(원가, 만)": st.column_config.NumberColumn(
+                "보석원가(만)", format="localized", width="small"
+            ),
+            "인정보석가치(90%, 만)": st.column_config.NumberColumn(
+                "보석인정가(90%)", format="localized", width="small"
+            ),
+            "찐판매가(만)": st.column_config.NumberColumn(
+                "찐판매가(만)", format="localized", width="small"
+            ),
+            "업횟": st.column_config.NumberColumn("업횟", width="small"),
+            "작횟": st.column_config.NumberColumn("작횟", width="small"),
         },
     )
 elif PACKET_ACTIVE_FILE.exists() or PACKET_COMPLETED_FILE.exists():
