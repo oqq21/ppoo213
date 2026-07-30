@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-30-gem-price-grid-v6"
+APP_BUILD = "2026-07-30-compact-gem-upgrade-v7"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -1519,7 +1519,7 @@ if st.session_state.get("show_gem_prices"):
         ]
         st.dataframe(
             pd.DataFrame(gem_rows),
-            use_container_width=True,
+            width=760,
             hide_index=True,
             height=400,
             row_height=30,
@@ -1578,8 +1578,6 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
             "보석비(원가, 만)",
             "인정보석가치(90%, 만)",
             "찐판매가(만)",
-            "업횟",
-            "작횟",
         ],
         column_config={
             "상태": st.column_config.Column("상태", width="small"),
@@ -1603,8 +1601,6 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
             "찐판매가(만)": st.column_config.NumberColumn(
                 "찐판매가(만)", format="localized", width="small"
             ),
-            "업횟": st.column_config.NumberColumn("업횟", width="small"),
-            "작횟": st.column_config.NumberColumn("작횟", width="small"),
         },
     )
 elif PACKET_ACTIVE_FILE.exists() or PACKET_COMPLETED_FILE.exists():

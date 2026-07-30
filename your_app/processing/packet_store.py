@@ -455,6 +455,10 @@ def format_stat_text(row: pd.Series, prefix: str, include_gems: bool = False) ->
             value += int(row.get(f"gem_{stat}", 0) or 0)
         if value:
             parts.append(f"{STAT_LABELS[stat]}{value}")
+    if prefix == "add":
+        upgrade_left = int(row.get("total_upgrade_left", 0) or 0)
+        if upgrade_left > 0:
+            parts.append(f"업횟{upgrade_left}")
     return " ".join(parts)
 
 
@@ -577,6 +581,4 @@ def packet_view(
         "보석비(원가, 만)": _to_man("gem_cost"),
         "인정보석가치(90%, 만)": _to_man("recognized_gem_value"),
         "찐판매가(만)": _to_man("true_price"),
-        "업횟": _numeric(work, "total_upgrade_left"),
-        "작횟": _numeric(work, "total_work_count"),
     })

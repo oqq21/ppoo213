@@ -184,6 +184,15 @@ class PacketRuleTests(unittest.TestCase):
         result = packet_view(frame)
         self.assertEqual(result.at[0, "추가스탯"], "덱21 물방-1")
 
+    def test_upgrade_count_is_appended_to_additional_stats(self):
+        frame = pd.DataFrame([
+            sample_row(add_DEX=21, total_upgrade_left=7, total_work_count=3),
+        ])
+        result = packet_view(frame)
+        self.assertEqual(result.at[0, "추가스탯"], "덱21 업횟7")
+        self.assertNotIn("업횟", result.columns)
+        self.assertNotIn("작횟", result.columns)
+
     def test_item_color_uses_additional_stats_and_hp_mp_tenths(self):
         row = pd.Series(sample_row(
             add_DEX=20,
