@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-30-total-stat-search-v3"
+APP_BUILD = "2026-07-30-compact-layout-v4"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -992,20 +992,36 @@ st.markdown(
     """
     <style>
       body, .stApp { background-color: #f2f2f2; color: #111; }
-      .block-container { max-width: 100%; padding-top: 0.2rem; padding-bottom: 0.4rem; }
+      .block-container { max-width: 100%; padding: 0.1rem 0.75rem 0.25rem; }
+      div[data-testid="stVerticalBlock"] { gap: 0.32rem; }
+      div[data-testid="stHorizontalBlock"] { gap: 0.45rem; }
       div[data-testid="stDataFrame"] { font-size: 11px; }
       .stMarkdown p { margin-bottom: 0.1rem; }
       div[data-testid="stMarkdownContainer"] h2 { margin-bottom: 0.1rem; }
       div[data-testid="stToolbar"] { visibility: hidden; height: 0px; }
-      .stButton button { padding: 2px 4px; font-size: 6px; white-space: nowrap; }
-      button[kind="primary"] { padding: 5px 14px; font-size: 11px; }
+      .stButton button {
+        min-height: 30px;
+        height: 31px;
+        padding: 2px 7px;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      button[kind="primary"] { min-height: 30px; padding: 3px 9px; font-size: 11px; }
+      div[data-testid="stTextInput"] input {
+        min-height: 34px;
+        height: 34px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+      }
+      div[data-baseweb="input"] { min-height: 34px; height: 34px; }
+      div[data-testid="stTextInput"] label { min-height: 0; margin-bottom: 1px; }
       .stRadio label { font-size: 9px; }
       .link-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 6px 16px;
-        min-height: 36px;
+        padding: 4px 11px;
+        min-height: 30px;
         background: #e6e6e6;
         border: 1px solid #cfcfcf;
         border-radius: 6px;
@@ -1018,13 +1034,13 @@ st.markdown(
       .link-btn.disabled { color: #888; background: #f2f2f2; border-color: #ddd; }
       .base-stat { font-size: 15px; font-weight: 700; color: #000; line-height: 1.3; }
       .base-stat-empty { font-size: 11px; font-weight: 700; color: #000; }
-      .stTabs [data-baseweb="tab-list"] { gap: 6px; }
+      .stTabs [data-baseweb="tab-list"] { gap: 3px; }
       .stTabs [data-baseweb="tab"] {
         background: #e7e9f7;
-        border-radius: 7px 7px 0 0;
-        padding: 7px 18px;
-        min-height: 38px;
-        line-height: 1.25;
+        border-radius: 5px 5px 0 0;
+        padding: 4px 11px;
+        min-height: 31px;
+        line-height: 1.1;
         font-weight: 700;
       }
       .stTabs [data-baseweb="tab"] p {
@@ -1035,8 +1051,33 @@ st.markdown(
         background: #5b6fe5 !important;
         color: white !important;
       }
+      .stTabs [data-baseweb="tab-panel"] { padding-top: 0 !important; }
+      div[data-testid="stElementContainer"]:has(.market-nav-anchor) {
+        display: none;
+      }
+      div[data-testid="stElementContainer"]:has(.market-nav-anchor)
+        + div[data-testid="stHorizontalBlock"] {
+        position: relative;
+        z-index: 2;
+        margin-top: -34px;
+        margin-bottom: -1px;
+      }
+      div[data-testid="stElementContainer"]:has(.market-nav-anchor)
+        + div[data-testid="stHorizontalBlock"] .stButton button {
+        width: 31px;
+        min-width: 31px;
+        height: 28px;
+        min-height: 28px;
+        padding: 0;
+      }
+      .packet-title {
+        font-size: 21px;
+        line-height: 30px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
       div[data-testid="stDataFrame"] table tbody tr td:nth-child(4) { font-weight: 700; }
-      div[data-testid="stDataFrame"] { font-size: 15px; font-weight: 650; }
+      div[data-testid="stDataFrame"] { font-size: 14px; font-weight: 650; }
       div[data-testid="stDataFrame"] thead tr th { pointer-events: none; }
       div[data-testid="stDataFrame"] thead { cursor: default; }
     </style>
@@ -1228,8 +1269,6 @@ with col_left:
                     st.rerun()
 
 with col_right:
-    # 상단 탭이 화면 위쪽에 붙어 글자가 잘리지 않도록 검색 입력줄과 높이를 맞춘다.
-    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     sell_tab, buy_tab, parquet_tab = st.tabs(["🟢 판매 API", "🔵 구매 API", "🟣 Parquet"])
 
     market_specs = [
@@ -1242,19 +1281,36 @@ with col_right:
             page = st.session_state.get(page_key, 1)
             page_view, page, pages, total = _paginate_df(market_view, page, 10)
             st.session_state[page_key] = page
-            nav = st.columns([0.7, 0.7, 2, 7])
-            if nav[0].button("◀", key=f"{key_prefix}_prev", type="primary") and page > 1:
+            st.markdown(
+                "<span class='market-nav-anchor'></span>",
+                unsafe_allow_html=True,
+            )
+            nav = st.columns([2.35, 0.25, 0.25, 1.0, 6.5], gap="small")
+            if nav[1].button(
+                "◀",
+                key=f"{key_prefix}_prev",
+                type="primary",
+                use_container_width=True,
+                disabled=page <= 1,
+            ):
                 st.session_state[page_key] = page - 1
                 st.rerun()
-            if nav[1].button("▶", key=f"{key_prefix}_next", type="primary") and pages and page < pages:
+            if nav[2].button(
+                "▶",
+                key=f"{key_prefix}_next",
+                type="primary",
+                use_container_width=True,
+                disabled=not pages or page >= pages,
+            ):
                 st.session_state[page_key] = page + 1
                 st.rerun()
-            nav[2].caption(f"{page}/{pages} · 총 {total}")
+            nav[3].caption(f"{page}/{pages} · {total}건")
             st.dataframe(
                 _style_status_rows(page_view),
                 use_container_width=True,
                 hide_index=True,
-                height=385,
+                height=240,
+                row_height=32,
                 key=f"market_df_{key_prefix}_{st.session_state.get('api_render_id', 0)}",
                 column_config={
                     "색": st.column_config.Column("색", width="small"),
@@ -1344,17 +1400,90 @@ if groups is not None and not groups.empty:
         st.session_state["run_now"] = False
         st.rerun()
 
-packet_header = st.columns([1.4, 1.6, 1.8, 2.6, 4])
-packet_header[0].markdown("### 패킷 매물")
-completed_only = packet_header[1].toggle("Completed만 보기", key="packet_completed_only")
-if packet_header[2].button("보석 시세 보기", use_container_width=True):
+packet_rows = st.session_state.get("packet_rows", pd.DataFrame())
+packet_dedup = int(st.session_state.get("packet_dedup_count", 0) or 0)
+completed_only = bool(st.session_state.get("packet_completed_only", False))
+visible_packet = pd.DataFrame()
+completed_prices = pd.Series(dtype="float64")
+packet_page_size = 100
+packet_total = 0
+packet_pages = 1
+packet_page = 1
+packet_slice = pd.DataFrame()
+
+if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
+    visible_packet = packet_rows.copy()
+    if completed_only:
+        visible_packet = visible_packet[
+            visible_packet["status"].eq("completed")
+        ].copy()
+    visible_packet["_sort_time"] = pd.to_datetime(
+        visible_packet["captured_at"],
+        errors="coerce",
+    )
+    visible_packet = visible_packet.sort_values(
+        "_sort_time",
+        ascending=False,
+    ).drop(columns="_sort_time")
+    completed_prices = (
+        visible_packet[visible_packet["status"].eq("completed")]
+        .groupby("itemCode")["unit_price"]
+        .median()
+    )
+    packet_total = len(visible_packet)
+    packet_pages = max(
+        1,
+        (packet_total + packet_page_size - 1) // packet_page_size,
+    )
+    packet_page = min(
+        packet_pages,
+        max(1, int(st.session_state.get("packet_page", 1) or 1)),
+    )
+    st.session_state["packet_page"] = packet_page
+    packet_start = (packet_page - 1) * packet_page_size
+    packet_slice = visible_packet.iloc[
+        packet_start:packet_start + packet_page_size
+    ].copy()
+
+packet_header = st.columns(
+    [1.05, 1.18, 1.05, 0.28, 0.28, 0.9, 1.25, 3.0],
+    gap="small",
+)
+packet_header[0].markdown(
+    "<div class='packet-title'>패킷 매물</div>",
+    unsafe_allow_html=True,
+)
+packet_header[1].toggle(
+    "Completed만",
+    key="packet_completed_only",
+)
+if packet_header[2].button("보석 시세", use_container_width=True):
     st.session_state["show_gem_prices"] = not bool(
         st.session_state.get("show_gem_prices", False)
     )
-packet_rows = st.session_state.get("packet_rows", pd.DataFrame())
-packet_dedup = int(st.session_state.get("packet_dedup_count", 0) or 0)
-packet_header[3].caption(f"중복 Active 제외 {packet_dedup:,}건")
-packet_header[4].caption("표시·정렬: packet_time · 3일 중복 판정: 패킷 내부시간")
+if packet_header[3].button(
+    "◀",
+    key="packet_prev",
+    type="primary",
+    use_container_width=True,
+    disabled=packet_page <= 1,
+):
+    st.session_state["packet_page"] = packet_page - 1
+    st.rerun()
+if packet_header[4].button(
+    "▶",
+    key="packet_next",
+    type="primary",
+    use_container_width=True,
+    disabled=packet_page >= packet_pages,
+):
+    st.session_state["packet_page"] = packet_page + 1
+    st.rerun()
+packet_header[5].caption(
+    f"{packet_page}/{packet_pages} · {packet_total:,}건"
+)
+packet_header[6].caption(f"중복제외 {packet_dedup:,}건")
+packet_header[7].caption("정렬 packet_time · 중복 판정 3일")
 
 if st.session_state.get("show_gem_prices"):
     try:
@@ -1376,54 +1505,13 @@ if st.session_state.get("show_gem_prices"):
             pd.DataFrame(gem_rows),
             use_container_width=True,
             hide_index=True,
-            height=260,
+            height=220,
+            row_height=30,
         )
     except Exception as exc:
         st.warning(f"보석 시세를 읽지 못했습니다: {exc}")
 
 if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
-    visible_packet = packet_rows.copy()
-    if completed_only:
-        visible_packet = visible_packet[visible_packet["status"].eq("completed")].copy()
-    visible_packet["_sort_time"] = pd.to_datetime(visible_packet["captured_at"], errors="coerce")
-    visible_packet = visible_packet.sort_values("_sort_time", ascending=False).drop(columns="_sort_time")
-    completed_prices = (
-        visible_packet[visible_packet["status"].eq("completed")]
-        .groupby("itemCode")["unit_price"]
-        .median()
-    )
-    packet_page_size = 100
-    packet_total = len(visible_packet)
-    packet_pages = max(1, (packet_total + packet_page_size - 1) // packet_page_size)
-    packet_page = min(
-        packet_pages,
-        max(1, int(st.session_state.get("packet_page", 1) or 1)),
-    )
-    st.session_state["packet_page"] = packet_page
-    packet_nav = st.columns([0.7, 0.7, 2.4, 7])
-    if packet_nav[0].button(
-        "◀",
-        key="packet_prev",
-        type="primary",
-        disabled=packet_page <= 1,
-    ):
-        st.session_state["packet_page"] = packet_page - 1
-        st.rerun()
-    if packet_nav[1].button(
-        "▶",
-        key="packet_next",
-        type="primary",
-        disabled=packet_page >= packet_pages,
-    ):
-        st.session_state["packet_page"] = packet_page + 1
-        st.rerun()
-    packet_nav[2].caption(
-        f"{packet_page}/{packet_pages} · 총 {packet_total:,}건"
-    )
-    packet_start = (packet_page - 1) * packet_page_size
-    packet_slice = visible_packet.iloc[
-        packet_start:packet_start + packet_page_size
-    ].copy()
     view = packet_view(
         packet_slice,
         include_gems=bool(st.session_state.get("packet_include_gems", False)),
@@ -1433,8 +1521,8 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
         _style_status_rows(view),
         use_container_width=True,
         hide_index=True,
-        height=520,
-        row_height=44,
+        height=380,
+        row_height=34,
         column_order=[
             "상태",
             "패킷시간",
