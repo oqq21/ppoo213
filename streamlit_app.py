@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import html
+import json
 import tempfile
 import importlib
 from typing import Optional
@@ -14,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-25-query-boundaries-v1"
+APP_BUILD = "2026-07-30-rebalance-v1"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -165,8 +166,10 @@ def _relative_time(ts) -> str:
             return ""
         now = pd.Timestamp.now(tz="UTC")
         sec = int(max(0, (now - t).total_seconds()))
+        if sec < 60:
+            return "방금 전"
         if sec < 3600:
-            return f"{max(1, sec // 60)}분 전"
+            return f"{sec // 60}분 전"
         if sec < 86400:
             return f"{max(1, sec // 3600)}시간 전"
         return f"{max(1, sec // 86400)}일 전"
@@ -219,7 +222,7 @@ def _item_name_css(color_key: str) -> str:
 
 
 def _style_status_rows(frame: pd.DataFrame):
-    """행의 상태 배경은 유지하면서 아이템명 글자에만 장비 색상을 입힌다."""
+    """Apply every semantic color to its own cell, never to the whole row."""
     if frame is None or frame.empty:
         return frame
     display = frame.copy()
@@ -228,24 +231,24 @@ def _style_status_rows(frame: pd.DataFrame):
         if "_아이템색" in display.columns
         else None
     )
-
-    def _row_style(row: pd.Series) -> list[str]:
-        status = str(row.get("상태", ""))
-        if "Active" in status:
-            style = "background-color: #e8f2ff; color: #123b67;"
-        elif "Completed" in status:
-            style = "background-color: #f3e9ff; color: #51247a;"
-        elif "판매중" in status:
-            style = "background-color: #e9f8ef; color: #155d34;"
-        elif "판매완료" in status:
-            style = "background-color: #f2f2f2; color: #666666;"
-        else:
-            style = ""
-        return [style] * len(row)
+    gem_styles = (
+        display.pop("_보석셀")
+        if "_보석셀" in display.columns
+        else None
+    )
 
     styled = display.style
     if "상태" in display.columns:
-        styled = styled.apply(_row_style, axis=1)
+        status_styles = []
+        for value in display["상태"]:
+            text = str(value)
+            if "Active" in text or "판매중" in text:
+                status_styles.append("background-color: #e8f2ff; color: #123b67; font-weight: 800;")
+            elif "Completed" in text or "판매완료" in text:
+                status_styles.append("background-color: #f3e9ff; color: #51247a; font-weight: 800;")
+            else:
+                status_styles.append("")
+        styled = styled.apply(lambda _column: status_styles, axis=0, subset=["상태"])
     if item_colors is not None and "아이템" in display.columns:
         name_styles = [_item_name_css(value) for value in item_colors]
         styled = styled.apply(
@@ -253,6 +256,14 @@ def _style_status_rows(frame: pd.DataFrame):
             axis=0,
             subset=["아이템"],
         )
+    if gem_styles is not None and "보석" in display.columns:
+        colors = {
+            "red": "background-color: #ff9b9b; color: #111; font-weight: 800;",
+            "green": "background-color: #b9efae; color: #111; font-weight: 800;",
+            "white": "background-color: #ffffff; color: #111; font-weight: 800;",
+        }
+        styles = [colors.get(str(value), colors["white"]) for value in gem_styles]
+        styled = styled.apply(lambda _column: styles, axis=0, subset=["보석"])
     return styled
 
 
@@ -1012,6 +1023,7 @@ st.markdown(
         color: white !important;
       }
       div[data-testid="stDataFrame"] table tbody tr td:nth-child(4) { font-weight: 700; }
+      div[data-testid="stDataFrame"] { font-size: 15px; font-weight: 650; }
       div[data-testid="stDataFrame"] thead tr th { pointer-events: none; }
       div[data-testid="stDataFrame"] thead { cursor: default; }
     </style>
@@ -1029,6 +1041,7 @@ except Exception as exc:
 sales_file = _find_sales_file(data_snapshot.directory)
 PACKET_ACTIVE_FILE = data_snapshot.path("packet_active.parquet")
 PACKET_COMPLETED_FILE = data_snapshot.path("packet_completed.parquet")
+GEM_PRICES_FILE = data_snapshot.path("gem_prices.json")
 
 if not excel_file.exists():
     st.error("item.xlsx 파일이 없습니다. 먼저 업로드/배치해주세요.")
@@ -1164,6 +1177,12 @@ with col_left:
         btn_stat_col.markdown("<div class='base-stat-empty'>대표아이템 스탯 없음</div>", unsafe_allow_html=True)
 
     include_api = True
+    st.toggle(
+        "보석 적용 스탯으로 검색",
+        key="packet_include_gems",
+        on_change=_trigger_search,
+        help="끄면 원래 추가스탯, 켜면 추가스탯+보석스탯을 정확히 검색합니다.",
+    )
 
     if btn_base:
         text, title = _base_stats_from_query(df_items, st.session_state.get("query", ""))
@@ -1285,6 +1304,9 @@ if groups is not None and not groups.empty:
                     PACKET_COMPLETED_FILE,
                     packet_codes,
                     tokens,
+                    include_gems=bool(
+                        st.session_state.get("packet_include_gems", False)
+                    ),
                 )
 
         st.session_state["api_sell"] = api_sell
@@ -1307,13 +1329,42 @@ if groups is not None and not groups.empty:
         st.session_state["run_now"] = False
         st.rerun()
 
-packet_header = st.columns([1.4, 1.6, 3, 5])
+packet_header = st.columns([1.4, 1.6, 1.8, 2.6, 4])
 packet_header[0].markdown("### 패킷 매물")
 completed_only = packet_header[1].toggle("Completed만 보기", key="packet_completed_only")
+if packet_header[2].button("보석 시세 보기", use_container_width=True):
+    st.session_state["show_gem_prices"] = not bool(
+        st.session_state.get("show_gem_prices", False)
+    )
 packet_rows = st.session_state.get("packet_rows", pd.DataFrame())
 packet_dedup = int(st.session_state.get("packet_dedup_count", 0) or 0)
-packet_header[2].caption(f"중복 Active 제외 {packet_dedup:,}건")
-packet_header[3].caption("표시·정렬: packet_time · 3일 중복 판정: 패킷 내부시간")
+packet_header[3].caption(f"중복 Active 제외 {packet_dedup:,}건")
+packet_header[4].caption("표시·정렬: packet_time · 3일 중복 판정: 패킷 내부시간")
+
+if st.session_state.get("show_gem_prices"):
+    try:
+        raw_gem_prices = json.loads(GEM_PRICES_FILE.read_text(encoding="utf-8"))
+        grade_names = {6000: "하급", 16000: "중급", 26000: "상급"}
+        gem_rows = []
+        for raw_code, price in sorted(raw_gem_prices.items(), key=lambda pair: int(pair[0])):
+            code = int(raw_code)
+            base = max(value for value in grade_names if value <= code)
+            suffix = code - base
+            label, values = _packet_store.GEM_OPTION_LABELS[suffix]
+            grade_index = (6000, 16000, 26000).index(base)
+            gem_rows.append({
+                "등급": grade_names[base],
+                "옵션": f"{label}+{values[grade_index]}",
+                "시세(만)": int(round(int(price) / 10_000)),
+            })
+        st.dataframe(
+            pd.DataFrame(gem_rows),
+            use_container_width=True,
+            hide_index=True,
+            height=260,
+        )
+    except Exception as exc:
+        st.warning(f"보석 시세를 읽지 못했습니다: {exc}")
 
 if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
     visible_packet = packet_rows.copy()
@@ -1321,7 +1372,10 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
         visible_packet = visible_packet[visible_packet["status"].eq("completed")].copy()
     visible_packet["_sort_time"] = pd.to_datetime(visible_packet["captured_at"], errors="coerce")
     visible_packet = visible_packet.sort_values("_sort_time", ascending=False).drop(columns="_sort_time")
-    view = packet_view(visible_packet)
+    view = packet_view(
+        visible_packet,
+        include_gems=bool(st.session_state.get("packet_include_gems", False)),
+    )
     st.dataframe(
         _style_status_rows(view),
         use_container_width=True,
@@ -1330,8 +1384,10 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
         column_config={
             "상태": st.column_config.Column("상태", width="small"),
             "패킷시간": st.column_config.Column("패킷시간", width="medium"),
+            "추가스탯": st.column_config.Column("추가스탯", width="large"),
             "판매가(만)": st.column_config.NumberColumn("판매가(만)", format="localized"),
-            "보석": st.column_config.Column("보석", width="large"),
+            "대략시세(만)": st.column_config.NumberColumn("대략시세(만)", format="localized"),
+            "보석": st.column_config.Column("보석", width="small"),
             "보석비(원가, 만)": st.column_config.NumberColumn("보석비(원가, 만)", format="localized"),
             "인정보석가치(90%, 만)": st.column_config.NumberColumn("인정보석가치(90%, 만)", format="localized"),
             "찐판매가(만)": st.column_config.NumberColumn("찐판매가(만)", format="localized"),

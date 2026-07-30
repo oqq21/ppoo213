@@ -60,6 +60,9 @@ TOTAL_COMPONENTS = {
     "법행": ["INT", "LUK"],
 }
 
+# 사용자 기준: 양수 '마'와 '인'은 언제나 INT + 마력(MAD) 합계다.
+MAGIC_TOTAL_COMPONENTS = ["INT", "MAD"]
+
 ZERO_COMPONENTS = {
     **{name: [stat] for name, stat in SIMPLE_STATS.items()},
     **TOTAL_COMPONENTS,
@@ -122,14 +125,29 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     return pd.to_numeric(frame[column], errors="coerce").fillna(0).astype("int64")
 
 
-def _all_additional_zero(frame: pd.DataFrame, components: list[str]) -> pd.Series:
+def _effective_add(frame: pd.DataFrame, stat: str, include_gems: bool) -> pd.Series:
+    values = _numeric(frame, f"add_{stat}")
+    if include_gems:
+        values = values + _numeric(frame, f"gem_{stat}")
+    return values
+
+
+def _all_additional_zero(
+    frame: pd.DataFrame,
+    components: list[str],
+    include_gems: bool,
+) -> pd.Series:
     mask = pd.Series(True, index=frame.index)
     for component in components:
-        mask &= _numeric(frame, f"add_{component}").eq(0)
+        mask &= _effective_add(frame, component, include_gems).eq(0)
     return mask
 
 
-def filter_packet_rows(frame: pd.DataFrame, tokens: list[str]) -> pd.DataFrame:
+def filter_packet_rows(
+    frame: pd.DataFrame,
+    tokens: list[str],
+    include_gems: bool = False,
+) -> pd.DataFrame:
     if frame.empty:
         return frame
     work = frame.copy()
@@ -151,19 +169,28 @@ def filter_packet_rows(frame: pd.DataFrame, tokens: list[str]) -> pd.DataFrame:
         name, target = match.group(1), int(match.group(2))
 
         if target == 0:
-            components = ZERO_COMPONENTS.get(name)
-            if components:
-                mask &= _all_additional_zero(work, components)
+            if name in ("인", "인트", "마"):
+                values = sum(
+                    (_effective_add(work, stat, include_gems) for stat in MAGIC_TOTAL_COMPONENTS),
+                    start=pd.Series(0, index=work.index),
+                )
+                mask &= values.eq(0)
+            else:
+                components = ZERO_COMPONENTS.get(name)
+                if components:
+                    mask &= _all_additional_zero(work, components, include_gems)
             continue
 
         if name == "법신":
-            values = sum((_numeric(work, f"add_{stat}") for stat in ["INT", "LUK", "MAD"]), start=pd.Series(0, index=work.index))
+            values = sum(
+                (_effective_add(work, stat, include_gems) for stat in ["INT", "LUK", "MAD"]),
+                start=pd.Series(0, index=work.index),
+            )
             mask &= values.eq(target)
             continue
 
         if name in ("인", "인트", "마"):
-            # 기존 사이트 규칙: 양수 인/마 조건은 인트+마력 총합.
-            components = ["INT", "MAD"]
+            components = MAGIC_TOTAL_COMPONENTS
         elif name in TOTAL_COMPONENTS:
             components = TOTAL_COMPONENTS[name]
         else:
@@ -172,20 +199,30 @@ def filter_packet_rows(frame: pd.DataFrame, tokens: list[str]) -> pd.DataFrame:
         if not components:
             continue
 
+        # 기준의 모든 수치는 추가스탯 기준이다. 패킷 total_*은 표시와
+        # 중복 판정에만 쓰고 조건 필터는 add_*로 수행한다.
         values = sum(
-            (_numeric(work, f"total_{stat}") for stat in components),
+            (_effective_add(work, stat, include_gems) for stat in components),
             start=pd.Series(0, index=work.index),
         )
         mask &= values.eq(target)
 
         if name == "신점":
-            mask &= _numeric(work, "add_DEX").ge(_numeric(work, "add_ACC"))
+            mask &= _effective_add(work, "DEX", include_gems).ge(
+                _effective_add(work, "ACC", include_gems)
+            )
         elif name == "신민":
-            mask &= _numeric(work, "add_ACC").ge(_numeric(work, "add_DEX"))
+            mask &= _effective_add(work, "ACC", include_gems).ge(
+                _effective_add(work, "DEX", include_gems)
+            )
         elif name == "법지":
-            mask &= _numeric(work, "add_INT").ge(_numeric(work, "add_LUK"))
+            mask &= _effective_add(work, "INT", include_gems).ge(
+                _effective_add(work, "LUK", include_gems)
+            )
         elif name == "법행":
-            mask &= _numeric(work, "add_LUK").ge(_numeric(work, "add_INT"))
+            mask &= _effective_add(work, "LUK", include_gems).ge(
+                _effective_add(work, "INT", include_gems)
+            )
 
     return work[mask].copy()
 
@@ -329,9 +366,14 @@ def search_packet_data(
     completed_path: Path,
     item_codes: Iterable[int],
     tokens: list[str],
+    include_gems: bool = False,
 ) -> tuple[pd.DataFrame, int]:
-    active = filter_packet_rows(read_packet_rows(active_path, item_codes), tokens)
-    completed = filter_packet_rows(read_packet_rows(completed_path, item_codes), tokens)
+    active = filter_packet_rows(
+        read_packet_rows(active_path, item_codes), tokens, include_gems
+    )
+    completed = filter_packet_rows(
+        read_packet_rows(completed_path, item_codes), tokens, include_gems
+    )
     active, completed, duplicate_count = deduplicate_active_completed(
         active,
         completed,
@@ -345,10 +387,12 @@ def search_packet_data(
     return combined.reset_index(drop=True), duplicate_count
 
 
-def format_stat_text(row: pd.Series, prefix: str) -> str:
+def format_stat_text(row: pd.Series, prefix: str, include_gems: bool = False) -> str:
     parts = []
     for stat in ACTUAL_STATS:
         value = int(row.get(f"{prefix}_{stat}", 0) or 0)
+        if prefix == "add" and include_gems:
+            value += int(row.get(f"gem_{stat}", 0) or 0)
         if value:
             parts.append(f"{STAT_LABELS[stat]}{value}")
     return " ".join(parts)
@@ -372,10 +416,24 @@ def format_gem_text(row: pd.Series) -> str:
 
 
 def item_color_score(row: pd.Series) -> int:
-    """장비의 추가스탯 색상 점수. HP/MP는 10당 1점으로 환산한다."""
-    score = sum(int(row.get(f"add_{stat}", 0) or 0) for stat in ITEM_COLOR_STATS)
-    score += int(int(row.get("add_HP", 0) or 0) / 10)
-    score += int(int(row.get("add_MP", 0) or 0) / 10)
+    """Additional + gem score. HP/MP count as one point per ten."""
+    score = sum(
+        int(row.get(f"add_{stat}", 0) or 0)
+        + int(row.get(f"gem_{stat}", 0) or 0)
+        for stat in ITEM_COLOR_STATS
+    )
+    score += int(
+        (
+            int(row.get("add_HP", 0) or 0)
+            + int(row.get("gem_HP", 0) or 0)
+        ) / 10
+    )
+    score += int(
+        (
+            int(row.get("add_MP", 0) or 0)
+            + int(row.get("gem_MP", 0) or 0)
+        ) / 10
+    )
     return score
 
 
@@ -390,17 +448,20 @@ def format_packet_time(row: pd.Series) -> str:
     captured = pd.to_datetime(row.get("captured_at"), errors="coerce")
     if pd.isna(captured):
         return ""
-    displayed = captured.strftime("%Y-%m-%d %H:%M")
-    duration = row.get("_sale_duration_minutes")
-    if str(row.get("status", "")).lower() != "completed" or pd.isna(duration):
-        return displayed
-    minutes = max(0, int(duration))
-    if minutes < 60:
-        return f"{displayed} ({minutes}분)"
-    return f"{displayed} ({minutes // 60}시간)"
+    if captured.tzinfo is None:
+        captured = captured.tz_localize("Asia/Seoul")
+    now = pd.Timestamp.now(tz=captured.tz)
+    seconds = max(0, int((now - captured).total_seconds()))
+    if seconds < 60:
+        return "방금 전"
+    if seconds < 3600:
+        return f"{seconds // 60}분 전"
+    if seconds < 86_400:
+        return f"{seconds // 3600}시간 전"
+    return f"{seconds // 86_400}일 전"
 
 
-def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
+def packet_view(frame: pd.DataFrame, include_gems: bool = False) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame()
     work = frame.copy()
@@ -410,6 +471,13 @@ def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
         values = _numeric(work, column).clip(lower=0)
         return ((values + 5_000) // 10_000).astype("int64")
 
+    completed_prices = (
+        work[work["status"].eq("completed")]
+        .groupby("itemCode")["unit_price"]
+        .median()
+    )
+    approximate = work["itemCode"].map(completed_prices)
+    approximate_man = (pd.to_numeric(approximate, errors="coerce") / 10_000).round().astype("Int64")
     return pd.DataFrame({
         "상태": work["status"].map({
             "active": "🔵 Active",
@@ -418,13 +486,18 @@ def packet_view(frame: pd.DataFrame) -> pd.DataFrame:
         "패킷시간": work.apply(format_packet_time, axis=1),
         "아이템": work["itemName"],
         "_아이템색": work.apply(lambda row: item_color_key(item_color_score(row)), axis=1),
+        "추가스탯": work.apply(
+            lambda row: format_stat_text(row, "add", include_gems),
+            axis=1,
+        ),
         "판매가(만)": _to_man("unit_price"),
+        "대략시세(만)": approximate_man,
         # 저장된 옛 등급명 대신 옵션코드로 실제 적용 스탯을 표시한다.
         "보석": work.apply(format_gem_text, axis=1),
+        "_보석셀": work.get("gem_cell_style", pd.Series("white", index=work.index)),
         "보석비(원가, 만)": _to_man("gem_cost"),
         "인정보석가치(90%, 만)": _to_man("recognized_gem_value"),
         "찐판매가(만)": _to_man("true_price"),
         "업횟": _numeric(work, "total_upgrade_left"),
         "작횟": _numeric(work, "total_work_count"),
-        "추가스탯": work.apply(lambda row: format_stat_text(row, "add"), axis=1),
     })

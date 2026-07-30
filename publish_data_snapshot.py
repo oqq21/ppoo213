@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -19,11 +20,13 @@ DATA_NAMES = (
     "요약본.parquet",
     "packet_active.parquet",
     "packet_completed.parquet",
+    "gem_prices.json",
 )
 ASSET_PREFIXES = {
     "요약본.parquet": "summary",
     "packet_active.parquet": "packet-active",
     "packet_completed.parquet": "packet-completed",
+    "gem_prices.json": "gem-prices",
 }
 DEFAULT_REMOTE = "origin"
 DEFAULT_TAG = "web-data-latest"
@@ -71,6 +74,9 @@ def _default_sources(base_dir: Path) -> dict[str, Path | None]:
         "packet_completed.parquet": _first_existing([
             base_dir / "packet_completed.parquet",
         ]),
+        "gem_prices.json": _first_existing([
+            base_dir / "gem_prices.json",
+        ]),
     }
 
 
@@ -81,7 +87,7 @@ def _manifest(paths: dict[str, Path]) -> dict:
         files[name] = {
             "size": path.stat().st_size,
             "sha256": sha,
-            "asset": f"{ASSET_PREFIXES[name]}-{sha[:16]}.parquet",
+            "asset": f"{ASSET_PREFIXES[name]}-{sha[:16]}{path.suffix.lower()}",
         }
     version_source = "\n".join(
         f"{name}:{files[name]['sha256']}" for name in DATA_NAMES
@@ -150,11 +156,25 @@ def _session(token: str) -> requests.Session:
 
 
 def _request(session: requests.Session, method: str, url: str, **kwargs) -> requests.Response:
-    response = session.request(method, url, timeout=(15, 300), **kwargs)
-    if response.status_code >= 400:
-        message = response.text[:500].replace("\n", " ")
-        raise RuntimeError(f"GitHub API {method} {response.status_code}: {message}")
-    return response
+    attempts = 1 if method.upper() == "POST" else 4
+    for attempt in range(attempts):
+        try:
+            response = session.request(method, url, timeout=(15, 300), **kwargs)
+        except requests.RequestException:
+            if attempt + 1 >= attempts:
+                raise
+            time.sleep((2, 5, 15)[attempt])
+            continue
+        retryable = response.status_code in {429, 500, 502, 503, 504}
+        if retryable and attempt + 1 < attempts:
+            wait = int(response.headers.get("Retry-After") or (2, 5, 15)[attempt])
+            time.sleep(min(60, max(1, wait)))
+            continue
+        if response.status_code >= 400:
+            message = response.text[:500].replace("\n", " ")
+            raise RuntimeError(f"GitHub API {method} {response.status_code}: {message}")
+        return response
+    raise RuntimeError(f"GitHub API {method} 재시도 실패")
 
 
 def _ensure_release(
@@ -218,6 +238,7 @@ def _resolve_paths(args: argparse.Namespace, base_dir: Path) -> dict[str, Path]:
         "요약본.parquet": args.summary or args.src,
         "packet_active.parquet": args.active,
         "packet_completed.parquet": args.completed,
+        "gem_prices.json": args.gem_prices,
     }
     result: dict[str, Path] = {}
     for name in DATA_NAMES:
@@ -225,8 +246,9 @@ def _resolve_paths(args: argparse.Namespace, base_dir: Path) -> dict[str, Path]:
         path = Path(value).expanduser().resolve() if value else defaults[name]
         if path is None or not path.exists():
             raise FileNotFoundError(f"{name} 원본을 찾지 못했습니다: {path}")
-        if path.suffix.lower() != ".parquet":
-            raise ValueError(f"Parquet 파일이 아닙니다: {path}")
+        expected_suffix = ".json" if name == "gem_prices.json" else ".parquet"
+        if path.suffix.lower() != expected_suffix:
+            raise ValueError(f"파일 형식이 올바르지 않습니다: {path}")
         result[name] = path
     return result
 
@@ -239,6 +261,7 @@ def main() -> int:
     parser.add_argument("--summary", default="", help="요약본.parquet 경로")
     parser.add_argument("--active", default="", help="packet_active.parquet 경로")
     parser.add_argument("--completed", default="", help="packet_completed.parquet 경로")
+    parser.add_argument("--gem-prices", default="", help="gem_prices.json 경로")
     parser.add_argument("--src", default="", help="기존 호환: 요약본.parquet 경로")
     parser.add_argument("--target", default=DEFAULT_TARGET, help="Release 태그 기준 브랜치")
     parser.add_argument("--remote", default=DEFAULT_REMOTE)
@@ -294,7 +317,7 @@ def main() -> int:
                 release,
                 asset_name,
                 paths[logical_name],
-                "application/octet-stream",
+                "application/json" if logical_name.endswith(".json") else "application/octet-stream",
             )
             print(f"[UPLOAD] {asset_name}")
 

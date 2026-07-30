@@ -20,16 +20,13 @@ def handle_simple(raw: str, base: Dict[str,int], sem: Semantics) -> ProcResult:
     m = re.fullmatch(r"([가-힣A-Za-z]+)\s*([-+]?\d+)", raw.strip())
     if not m: return (None, None)
     k, v = m.group(1), int(m.group(2))
-    if v == 0:
-        return (([k], 0), None)
-    # 인/마 단일 입력도 (인+마) 합으로 본다는 기존 규칙까지 반영
+    # 인/마 단일 입력은 0을 포함해 언제나 (인+마) 합으로 본다.
     if k in ("인","마"):
         keys = ["인","마"]
-        base_sum = sum(int(base.get(x,0) or 0) for x in keys)
-        return ((keys, v - base_sum), None)
-    # 단일
-    base_val = int(base.get(k, 0) or 0)
-    return (([k], v - base_val), None)
+        return ((keys, v), None)
+    if v == 0:
+        return (([k], 0), None)
+    return (([k], v), None)
 
 @register(["전사","법사","궁수","도적","단도"])
 def handle_hap(raw: str, base: Dict[str,int], sem: Semantics) -> ProcResult:
@@ -46,8 +43,7 @@ def handle_hap(raw: str, base: Dict[str,int], sem: Semantics) -> ProcResult:
     }[job]
     if v == 0:
         return ((comp, 0), None)
-    base_sum = sum(int(base.get(x,0) or 0) for x in comp)
-    return ((comp, v - base_sum), None)
+    return ((comp, v), None)
 
 @register(["신점","신민"])
 def handle_flags(raw: str, base: Dict[str,int], sem: Semantics) -> ProcResult:
@@ -66,8 +62,7 @@ def handle_shin_point(raw: str, base: Dict[str,int], sem: Semantics):
     comp = ["힘","덱","명"]
     if v == 0:
         return ((comp, 0), ("cmp_dex_gte_acc", None))
-    base_sum = sum(int(base.get(x,0) or 0) for x in comp)
-    return ((comp, v - base_sum), ("cmp_dex_gte_acc", None))
+    return ((comp, v), ("cmp_dex_gte_acc", None))
 
 @register(["신민"])
 def handle_shin_min(raw: str, base: Dict[str,int], sem: Semantics):
@@ -78,8 +73,7 @@ def handle_shin_min(raw: str, base: Dict[str,int], sem: Semantics):
     comp = ["힘","덱","명"]
     if v == 0:
         return ((comp, 0), ("cmp_acc_gte_dex", None))
-    base_sum = sum(int(base.get(x,0) or 0) for x in comp)
-    return ((comp, v - base_sum), ("cmp_acc_gte_dex", None))
+    return ((comp, v), ("cmp_acc_gte_dex", None))
 
 @register(["법지"])
 def handle_beop_ji(raw: str, base: Dict[str,int], sem: Semantics):
@@ -90,8 +84,7 @@ def handle_beop_ji(raw: str, base: Dict[str,int], sem: Semantics):
     comp = ["인","럭"]
     if v == 0:
         return ((comp, 0), ("cmp_int_gte_luk", None))
-    base_sum = sum(int(base.get(x,0) or 0) for x in comp)
-    return ((comp, v - base_sum), ("cmp_int_gte_luk", None))
+    return ((comp, v), ("cmp_int_gte_luk", None))
 
 @register(["법행"])
 def handle_beop_haeng(raw: str, base: Dict[str,int], sem: Semantics):
@@ -102,8 +95,7 @@ def handle_beop_haeng(raw: str, base: Dict[str,int], sem: Semantics):
     comp = ["인","럭"]
     if v == 0:
         return ((comp, 0), ("cmp_luk_gte_int", None))
-    base_sum = sum(int(base.get(x,0) or 0) for x in comp)
-    return ((comp, v - base_sum), ("cmp_luk_gte_int", None))
+    return ((comp, v), ("cmp_luk_gte_int", None))
 
 @register(["법신"])
 def handle_beop_shin(raw: str, base: Dict[str,int], sem: Semantics):

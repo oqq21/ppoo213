@@ -174,8 +174,8 @@ def _parse_condition(cond: str, base_stats: Dict[str, int]):
       - 후처리 플래그: ('cmp_dex_gte_acc' / 'cmp_acc_gte_dex' / 'cmp_int_gte_luk' / 'cmp_luk_gte_int' / 'tuc_eq', value)
 
     가공 전용 규칙:
-      - '인 10' 또는 '마 10' → (인+마) 추가합 = 10 - (기본인+기본마)
-      - '법사 n'            → (인+럭) 추가합 = n - (기본합)
+      - '인 10' 또는 '마 10' → (인+마) 추가합 = 10
+      - '법사 n'            → (인+럭) 추가합 = n
       - '법신 n'            → (인+럭+마) 추가합 == n   (기본 보정 없이 '추가값 그대로')
     """
     if not cond:
@@ -194,9 +194,8 @@ def _parse_condition(cond: str, base_stats: Dict[str, int]):
         if n == 0:
             flag = "cmp_dex_gte_acc" if m.group(1) == "신점" else "cmp_acc_gte_dex"
             return (comp, 0), (flag, None)
-        base_sum = sum(int(base_stats.get(x,0) or 0) for x in comp)
         flag = "cmp_dex_gte_acc" if m.group(1) == "신점" else "cmp_acc_gte_dex"
-        return (comp, n - base_sum), (flag, None)
+        return (comp, n), (flag, None)
 
     m = re.fullmatch(r"(법지|법행)\s*(\d+)", t)
     if m:
@@ -205,9 +204,8 @@ def _parse_condition(cond: str, base_stats: Dict[str, int]):
         if n == 0:
             flag = "cmp_int_gte_luk" if m.group(1) == "법지" else "cmp_luk_gte_int"
             return (comp, 0), (flag, None)
-        base_sum = sum(int(base_stats.get(x,0) or 0) for x in comp)
         flag = "cmp_int_gte_luk" if m.group(1) == "법지" else "cmp_luk_gte_int"
-        return (comp, n - base_sum), (flag, None)
+        return (comp, n), (flag, None)
 
     m = re.fullmatch(r"법신\s*(\d+)", t)
     if m:
@@ -225,9 +223,6 @@ def _parse_condition(cond: str, base_stats: Dict[str, int]):
     except ValueError:
         return None, None
 
-    def _base_sum(keys: List[str]) -> int:
-        return sum(int(base_stats.get(k, 0) or 0) for k in keys)
-
     std_key = STAT_KEYS.get(key, key)
 
     # 복합(가공 전용)
@@ -235,20 +230,19 @@ def _parse_condition(cond: str, base_stats: Dict[str, int]):
         keys = COMPOSITE[std_key]
         if val == 0:
             return (keys, 0), None
-        return (keys, val - _base_sum(keys)), None
+        return (keys, val), None
 
-    # 인/마 단일 입력도 (인+마)로 통일
+    # 인/마 단일 입력은 0을 포함해 (인+마)로 통일
     if std_key in ("인", "마"):
         if val == 0:
-            return ([std_key], 0), None
+            return (["인", "마"], 0), None
         keys = ["인", "마"]
-        return (keys, val - _base_sum(keys)), None
+        return (keys, val), None
 
     # 단일 키
     if val == 0:
         return ([std_key], 0), None
-    base_val = int(base_stats.get(std_key, 0) or 0)
-    return ([std_key], val - base_val), None
+    return ([std_key], val), None
 
 
 def _name_equals_in_allowed_set(row_name: str, allowed_names: set) -> bool:
