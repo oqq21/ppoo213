@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-30-packet-table-v2"
+APP_BUILD = "2026-07-30-total-stat-search-v3"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -1123,6 +1123,7 @@ if isinstance(pending, dict) and pending:
         st.session_state["page_sell"] = 1
         st.session_state["page_buy"] = 1
         st.session_state["page_parquet"] = 1
+        st.session_state["packet_page"] = 1
     try:
         text, title = _base_stats_from_query(df_items, st.session_state.get("query", ""))
     except Exception:
@@ -1194,7 +1195,7 @@ with col_left:
         "보석 적용 스탯으로 검색",
         key="packet_include_gems",
         on_change=_trigger_search,
-        help="끄면 원래 추가스탯, 켜면 추가스탯+보석스탯을 정확히 검색합니다.",
+        help="끄면 패킷 총스탯, 켜면 총스탯+보석스탯을 정확히 검색합니다.",
     )
 
     if btn_base:
@@ -1331,6 +1332,7 @@ if groups is not None and not groups.empty:
         st.session_state["page_sell"] = 1
         st.session_state["page_buy"] = 1
         st.session_state["page_parquet"] = 1
+        st.session_state["packet_page"] = 1
         _save_history_snapshot(
             st.session_state.get("query", ""),
             tokens,
@@ -1385,9 +1387,47 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
         visible_packet = visible_packet[visible_packet["status"].eq("completed")].copy()
     visible_packet["_sort_time"] = pd.to_datetime(visible_packet["captured_at"], errors="coerce")
     visible_packet = visible_packet.sort_values("_sort_time", ascending=False).drop(columns="_sort_time")
+    completed_prices = (
+        visible_packet[visible_packet["status"].eq("completed")]
+        .groupby("itemCode")["unit_price"]
+        .median()
+    )
+    packet_page_size = 100
+    packet_total = len(visible_packet)
+    packet_pages = max(1, (packet_total + packet_page_size - 1) // packet_page_size)
+    packet_page = min(
+        packet_pages,
+        max(1, int(st.session_state.get("packet_page", 1) or 1)),
+    )
+    st.session_state["packet_page"] = packet_page
+    packet_nav = st.columns([0.7, 0.7, 2.4, 7])
+    if packet_nav[0].button(
+        "◀",
+        key="packet_prev",
+        type="primary",
+        disabled=packet_page <= 1,
+    ):
+        st.session_state["packet_page"] = packet_page - 1
+        st.rerun()
+    if packet_nav[1].button(
+        "▶",
+        key="packet_next",
+        type="primary",
+        disabled=packet_page >= packet_pages,
+    ):
+        st.session_state["packet_page"] = packet_page + 1
+        st.rerun()
+    packet_nav[2].caption(
+        f"{packet_page}/{packet_pages} · 총 {packet_total:,}건"
+    )
+    packet_start = (packet_page - 1) * packet_page_size
+    packet_slice = visible_packet.iloc[
+        packet_start:packet_start + packet_page_size
+    ].copy()
     view = packet_view(
-        visible_packet,
+        packet_slice,
         include_gems=bool(st.session_state.get("packet_include_gems", False)),
+        approximate_prices=completed_prices,
     )
     st.dataframe(
         _style_status_rows(view),
