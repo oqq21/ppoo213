@@ -172,6 +172,7 @@ class PacketRuleTests(unittest.TestCase):
         self.assertEqual(result.at[0, "상태"], "🔵 Active")
         self.assertRegex(result.at[0, "패킷시간"], r"^\d+일전$")
         self.assertEqual(result.at[0, "판매가(만)"], 1_001)
+        self.assertEqual(result.at[0, "보석제외가(만)"], 798)
         self.assertEqual(result.at[0, "보석비(원가, 만)"], 225)
         self.assertEqual(result.at[0, "인정보석가치(90%, 만)"], 203)
         self.assertNotIn("대략시세(만)", result.columns)

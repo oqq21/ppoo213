@@ -550,6 +550,8 @@ def packet_view(
         values = _numeric(work, column).clip(lower=0)
         return ((values + 5_000) // 10_000).astype("int64")
 
+    sale_price_man = _to_man("unit_price")
+    recognized_gem_man = _to_man("recognized_gem_value")
     return pd.DataFrame({
         "상태": work["status"].map({
             "active": "🔵 Active",
@@ -563,10 +565,11 @@ def packet_view(
             lambda row: format_stat_text(row, "add", include_gems),
             axis=1,
         ),
-        "판매가(만)": _to_man("unit_price"),
+        "판매가(만)": sale_price_man,
+        "보석제외가(만)": sale_price_man - recognized_gem_man,
         # 저장된 옛 등급명 대신 옵션코드로 실제 적용 스탯을 표시한다.
         "보석": work.apply(format_gem_text, axis=1),
         "_보석셀": work.get("gem_cell_style", pd.Series("white", index=work.index)),
         "보석비(원가, 만)": _to_man("gem_cost"),
-        "인정보석가치(90%, 만)": _to_man("recognized_gem_value"),
+        "인정보석가치(90%, 만)": recognized_gem_man,
     })
