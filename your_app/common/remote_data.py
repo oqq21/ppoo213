@@ -27,6 +27,10 @@ DEFAULT_MANIFEST_URL = (
     "https://github.com/oqq21/ppoo213/releases/download/"
     "web-data-latest/manifest.json"
 )
+DEFAULT_FALLBACK_MANIFEST_URL = (
+    "https://github.com/oqq21/ppoo213/releases/download/"
+    "web-data-latest/manifest-fallback.json"
+)
 DEFAULT_ASSET_BASE_URL = (
     "https://github.com/oqq21/ppoo213/releases/download/web-data-latest"
 )
@@ -270,14 +274,30 @@ def ensure_data_snapshot(
                 # 공개 Release의 고정 manifest 자산은 REST API 제한을 쓰지 않는다.
                 # 데이터 파일명은 manifest에 있으므로 API 없이 다운로드 URL을
                 # 안전하게 구성할 수 있다.
-                manifest_response = requests.get(
-                    direct_manifest_url,
-                    params={"v": cache_buster},
-                    timeout=(15, 30),
-                    headers={"Cache-Control": "no-cache"},
-                )
-                manifest_response.raise_for_status()
-                manifest = _validate_manifest(manifest_response.json())
+                manifest_error: Exception | None = None
+                manifest = None
+                manifest_urls = [direct_manifest_url]
+                if direct_manifest_url == DEFAULT_MANIFEST_URL:
+                    manifest_urls.append(DEFAULT_FALLBACK_MANIFEST_URL)
+                for candidate_url in manifest_urls:
+                    try:
+                        manifest_response = requests.get(
+                            candidate_url,
+                            params={"v": cache_buster},
+                            timeout=(15, 30),
+                            headers={"Cache-Control": "no-cache"},
+                        )
+                        manifest_response.raise_for_status()
+                        manifest = _validate_manifest(
+                            manifest_response.json()
+                        )
+                        break
+                    except Exception as exc:
+                        manifest_error = exc
+                if manifest is None:
+                    raise RuntimeError(
+                        f"stable/fallback manifest 조회 실패: {manifest_error}"
+                    )
                 asset_base_url = str(
                     os.environ.get("PP213_DATA_ASSET_BASE_URL")
                     or DEFAULT_ASSET_BASE_URL

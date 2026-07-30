@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
@@ -104,19 +105,39 @@ ITEM_COLOR_STATS = (
 )
 
 
-def read_packet_rows(path: Path, item_codes: Iterable[int]) -> pd.DataFrame:
-    codes = sorted({int(code) for code in item_codes})
-    if not path.exists() or not codes:
-        return pd.DataFrame()
+@lru_cache(maxsize=4)
+def _read_packet_rows_cached(
+    path_text: str,
+    file_size: int,
+    modified_ns: int,
+    codes: tuple[int, ...],
+) -> pd.DataFrame:
+    # file_size/modified_ns are cache-key inputs. The path may be reused when
+    # a local snapshot is replaced, so the file identity must be part of the key.
+    del file_size, modified_ns
+    path = Path(path_text)
     try:
         return pd.read_parquet(
             path,
             engine="pyarrow",
-            filters=[("itemCode", "in", codes)],
+            filters=[("itemCode", "in", list(codes))],
         )
     except Exception:
         frame = pd.read_parquet(path, engine="pyarrow")
         return frame[frame["itemCode"].isin(codes)].copy()
+
+
+def read_packet_rows(path: Path, item_codes: Iterable[int]) -> pd.DataFrame:
+    codes = tuple(sorted({int(code) for code in item_codes}))
+    if not path.exists() or not codes:
+        return pd.DataFrame()
+    stat = path.stat()
+    return _read_packet_rows_cached(
+        str(path.resolve()),
+        int(stat.st_size),
+        int(stat.st_mtime_ns),
+        codes,
+    )
 
 
 def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -125,8 +146,14 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     return pd.to_numeric(frame[column], errors="coerce").fillna(0).astype("int64")
 
 
-def _effective_add(frame: pd.DataFrame, stat: str, include_gems: bool) -> pd.Series:
-    values = _numeric(frame, f"add_{stat}")
+def _effective_search_stat(
+    frame: pd.DataFrame,
+    stat: str,
+    include_gems: bool,
+) -> pd.Series:
+    # 웹 검색창에는 게임에서 보이는 총스탯을 입력한다.
+    # 보석 적용 검색을 켠 경우에만 패킷 총스탯에 보석 옵션을 더한다.
+    values = _numeric(frame, f"total_{stat}")
     if include_gems:
         values = values + _numeric(frame, f"gem_{stat}")
     return values
@@ -139,7 +166,7 @@ def _all_additional_zero(
 ) -> pd.Series:
     mask = pd.Series(True, index=frame.index)
     for component in components:
-        mask &= _effective_add(frame, component, include_gems).eq(0)
+        mask &= _effective_search_stat(frame, component, include_gems).eq(0)
     return mask
 
 
@@ -171,7 +198,10 @@ def filter_packet_rows(
         if target == 0:
             if name in ("인", "인트", "마"):
                 values = sum(
-                    (_effective_add(work, stat, include_gems) for stat in MAGIC_TOTAL_COMPONENTS),
+                    (
+                        _effective_search_stat(work, stat, include_gems)
+                        for stat in MAGIC_TOTAL_COMPONENTS
+                    ),
                     start=pd.Series(0, index=work.index),
                 )
                 mask &= values.eq(0)
@@ -183,7 +213,10 @@ def filter_packet_rows(
 
         if name == "법신":
             values = sum(
-                (_effective_add(work, stat, include_gems) for stat in ["INT", "LUK", "MAD"]),
+                (
+                    _effective_search_stat(work, stat, include_gems)
+                    for stat in ["INT", "LUK", "MAD"]
+                ),
                 start=pd.Series(0, index=work.index),
             )
             mask &= values.eq(target)
@@ -199,29 +232,32 @@ def filter_packet_rows(
         if not components:
             continue
 
-        # 기준의 모든 수치는 추가스탯 기준이다. 패킷 total_*은 표시와
-        # 중복 판정에만 쓰고 조건 필터는 add_*로 수행한다.
+        # 거래소조회 검색값은 패킷의 총스탯 기준이다. 보석 적용 검색을
+        # 켰을 때만 gem_*을 더한 정확한 총스탯과 비교한다.
         values = sum(
-            (_effective_add(work, stat, include_gems) for stat in components),
+            (
+                _effective_search_stat(work, stat, include_gems)
+                for stat in components
+            ),
             start=pd.Series(0, index=work.index),
         )
         mask &= values.eq(target)
 
         if name == "신점":
-            mask &= _effective_add(work, "DEX", include_gems).ge(
-                _effective_add(work, "ACC", include_gems)
+            mask &= _effective_search_stat(work, "DEX", include_gems).ge(
+                _effective_search_stat(work, "ACC", include_gems)
             )
         elif name == "신민":
-            mask &= _effective_add(work, "ACC", include_gems).ge(
-                _effective_add(work, "DEX", include_gems)
+            mask &= _effective_search_stat(work, "ACC", include_gems).ge(
+                _effective_search_stat(work, "DEX", include_gems)
             )
         elif name == "법지":
-            mask &= _effective_add(work, "INT", include_gems).ge(
-                _effective_add(work, "LUK", include_gems)
+            mask &= _effective_search_stat(work, "INT", include_gems).ge(
+                _effective_search_stat(work, "LUK", include_gems)
             )
         elif name == "법행":
-            mask &= _effective_add(work, "LUK", include_gems).ge(
-                _effective_add(work, "INT", include_gems)
+            mask &= _effective_search_stat(work, "LUK", include_gems).ge(
+                _effective_search_stat(work, "INT", include_gems)
             )
 
     return work[mask].copy()
@@ -237,6 +273,34 @@ def _fingerprint(row: pd.Series) -> tuple:
         *(int(row.get(f"total_{stat}", 0)) for stat in ACTUAL_STATS),
         str(row.get("option_codes", "")),
     )
+
+
+def _fingerprint_groups(frame: pd.DataFrame) -> dict[tuple, list[int]]:
+    columns = [
+        "itemCode",
+        "quantity",
+        "total_price",
+        "total_upgrade_left",
+        "total_work_count",
+        *(f"total_{stat}" for stat in ACTUAL_STATS),
+        "option_codes",
+    ]
+    normalized = pd.DataFrame(index=frame.index)
+    for column in columns:
+        if column == "option_codes":
+            normalized[column] = frame.get(
+                column,
+                pd.Series("", index=frame.index),
+            ).fillna("").astype(str)
+        else:
+            normalized[column] = _numeric(frame, column)
+    groups: dict[tuple, list[int]] = defaultdict(list)
+    for index, values in zip(
+        normalized.index,
+        normalized.itertuples(index=False, name=None),
+    ):
+        groups[tuple(values)].append(int(index))
+    return groups
 
 
 def deduplicate_active_completed(
@@ -266,12 +330,8 @@ def deduplicate_active_completed(
         errors="coerce",
     )
 
-    active_groups: dict[tuple, list[int]] = defaultdict(list)
-    completed_groups: dict[tuple, list[int]] = defaultdict(list)
-    for index, row in active_work.iterrows():
-        active_groups[_fingerprint(row)].append(index)
-    for index, row in completed_work.iterrows():
-        completed_groups[_fingerprint(row)].append(index)
+    active_groups = _fingerprint_groups(active_work)
+    completed_groups = _fingerprint_groups(completed_work)
 
     remove: set[int] = set()
     for fingerprint, completed_indexes in completed_groups.items():
@@ -473,7 +533,11 @@ def format_sale_duration(row: pd.Series) -> str:
     return f"{minutes // 1_440}일 {minutes % 1_440 // 60}시간"
 
 
-def packet_view(frame: pd.DataFrame, include_gems: bool = False) -> pd.DataFrame:
+def packet_view(
+    frame: pd.DataFrame,
+    include_gems: bool = False,
+    approximate_prices: pd.Series | dict | None = None,
+) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame()
     work = frame.copy()
@@ -483,11 +547,13 @@ def packet_view(frame: pd.DataFrame, include_gems: bool = False) -> pd.DataFrame
         values = _numeric(work, column).clip(lower=0)
         return ((values + 5_000) // 10_000).astype("int64")
 
-    completed_prices = (
-        work[work["status"].eq("completed")]
-        .groupby("itemCode")["unit_price"]
-        .median()
-    )
+    completed_prices = approximate_prices
+    if completed_prices is None:
+        completed_prices = (
+            work[work["status"].eq("completed")]
+            .groupby("itemCode")["unit_price"]
+            .median()
+        )
     approximate = work["itemCode"].map(completed_prices)
     approximate_man = (pd.to_numeric(approximate, errors="coerce") / 10_000).round().astype("Int64")
     return pd.DataFrame({

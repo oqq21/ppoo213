@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import requests
+
 from your_app.common import remote_data
 
 
@@ -137,6 +139,37 @@ class RemoteDataTests(unittest.TestCase):
 
         self.assertEqual(snapshot.version, "direct-version")
         self.assertFalse(any("api.github.com" in url for url in calls))
+
+    def test_fallback_manifest_is_used_when_stable_pointer_is_missing(self):
+        payloads = {
+            name: f"fallback:{name}".encode("utf-8")
+            for name in remote_data.DATA_FILES
+        }
+        manifest = _manifest("fallback-version", payloads)
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append(url)
+            if url == remote_data.DEFAULT_MANIFEST_URL:
+                raise requests.HTTPError("stable manifest missing")
+            if url == remote_data.DEFAULT_FALLBACK_MANIFEST_URL:
+                return _Response(json_value=manifest)
+            for name, info in manifest["files"].items():
+                if info["asset"] in url:
+                    return _Response(data=payloads[name])
+            raise AssertionError(url)
+
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "your_app.common.remote_data.requests.get",
+            side_effect=fake_get,
+        ):
+            snapshot = remote_data.ensure_data_snapshot(
+                temp,
+                check_interval=0,
+            )
+
+        self.assertEqual(snapshot.version, "fallback-version")
+        self.assertIn(remote_data.DEFAULT_FALLBACK_MANIFEST_URL, calls)
 
     def test_reuses_unchanged_file_blob_between_versions(self):
         payloads_v1 = {

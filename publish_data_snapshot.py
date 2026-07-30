@@ -33,6 +33,7 @@ DEFAULT_TAG = "web-data-latest"
 DEFAULT_TARGET = "main"
 API_ROOT = "https://api.github.com"
 STABLE_MANIFEST_NAME = "manifest.json"
+FALLBACK_MANIFEST_NAME = "manifest-fallback.json"
 
 
 def _run(args: list[str], cwd: Path, *, input_text: str = "") -> subprocess.CompletedProcess:
@@ -232,6 +233,37 @@ def _delete_asset(session: requests.Session, slug: str, asset_id: int) -> None:
     )
 
 
+def _asset_json(session: requests.Session, asset: dict | None) -> dict | None:
+    if not asset:
+        return None
+    url = str(asset.get("url") or "")
+    if not url:
+        return None
+    try:
+        response = _request(
+            session,
+            "GET",
+            url,
+            headers={"Accept": "application/octet-stream"},
+        )
+        return json.loads(response.content.decode("utf-8-sig"))
+    except Exception:
+        return None
+
+
+def _manifest_asset_names(manifest: dict | None) -> set[str]:
+    if not isinstance(manifest, dict):
+        return set()
+    files = manifest.get("files")
+    if not isinstance(files, dict):
+        return set()
+    return {
+        str(info.get("asset"))
+        for info in files.values()
+        if isinstance(info, dict) and info.get("asset")
+    }
+
+
 def _resolve_paths(args: argparse.Namespace, base_dir: Path) -> dict[str, Path]:
     defaults = _default_sources(base_dir)
     explicit = {
@@ -302,6 +334,10 @@ def main() -> int:
             for asset in release.get("assets", [])
             if isinstance(asset, dict) and asset.get("name")
         }
+        previous_manifest = (
+            _asset_json(session, assets.get(STABLE_MANIFEST_NAME))
+            or _asset_json(session, assets.get(FALLBACK_MANIFEST_NAME))
+        )
 
         for logical_name in DATA_NAMES:
             info = manifest["files"][logical_name]
@@ -328,16 +364,8 @@ def main() -> int:
             and current_pointer in str(release.get("body") or "")
             and manifest_name in assets
             and STABLE_MANIFEST_NAME in assets
+            and FALLBACK_MANIFEST_NAME in assets
         ):
-            keep_names = {
-                manifest_name,
-                STABLE_MANIFEST_NAME,
-                *(str(info["asset"]) for info in manifest["files"].values()),
-            }
-            for name, asset in list(assets.items()):
-                if name not in keep_names:
-                    _delete_asset(session, slug, int(asset["id"]))
-                    print(f"[CLEAN] {name}")
             print("[SKIP] GitHub Release 데이터가 이미 최신입니다.")
             return 0
 
@@ -358,6 +386,28 @@ def main() -> int:
                 "application/json",
             )
             print(f"[UPLOAD] {manifest_name}")
+
+            # 기존 stable manifest를 먼저 fallback으로 보존한다. 이후
+            # manifest.json 교체 도중 프로세스가 종료돼도 새 클라이언트는
+            # 완전한 직전 스냅샷을 받을 수 있다.
+            fallback_payload = previous_manifest or manifest
+            fallback_path = Path(temp) / FALLBACK_MANIFEST_NAME
+            fallback_path.write_text(
+                json.dumps(fallback_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            existing_fallback = assets.get(FALLBACK_MANIFEST_NAME)
+            if existing_fallback:
+                _delete_asset(session, slug, int(existing_fallback["id"]))
+            assets[FALLBACK_MANIFEST_NAME] = _upload_asset(
+                session,
+                release,
+                FALLBACK_MANIFEST_NAME,
+                fallback_path,
+                "application/json",
+            )
+            print(f"[UPLOAD] {FALLBACK_MANIFEST_NAME}")
+
             existing_stable_manifest = assets.get(STABLE_MANIFEST_NAME)
             if existing_stable_manifest:
                 _delete_asset(
@@ -384,8 +434,14 @@ def main() -> int:
         keep_names = {
             manifest_name,
             STABLE_MANIFEST_NAME,
+            FALLBACK_MANIFEST_NAME,
             *(str(info["asset"]) for info in manifest["files"].values()),
+            *_manifest_asset_names(previous_manifest),
         }
+        if previous_manifest and previous_manifest.get("version"):
+            keep_names.add(
+                f"manifest-{previous_manifest['version']}.json"
+            )
         for name, asset in list(assets.items()):
             if name not in keep_names:
                 _delete_asset(session, slug, int(asset["id"]))
