@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-30-compact-layout-v4"
+APP_BUILD = "2026-07-30-header-safe-layout-v5"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -992,7 +992,11 @@ st.markdown(
     """
     <style>
       body, .stApp { background-color: #f2f2f2; color: #111; }
-      .block-container { max-width: 100%; padding: 0.1rem 0.75rem 0.25rem; }
+      /* Streamlit Cloud의 고정 헤더가 첫 검색 줄과 탭을 덮지 않게 한다. */
+      .block-container {
+        max-width: 100%;
+        padding: 3rem 0.75rem 0.25rem !important;
+      }
       div[data-testid="stVerticalBlock"] { gap: 0.32rem; }
       div[data-testid="stHorizontalBlock"] { gap: 0.45rem; }
       div[data-testid="stDataFrame"] { font-size: 11px; }
