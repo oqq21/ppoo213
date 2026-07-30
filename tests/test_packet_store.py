@@ -174,7 +174,8 @@ class PacketRuleTests(unittest.TestCase):
         self.assertEqual(result.at[0, "판매가(만)"], 1_001)
         self.assertEqual(result.at[0, "보석비(원가, 만)"], 225)
         self.assertEqual(result.at[0, "인정보석가치(90%, 만)"], 203)
-        self.assertEqual(result.at[0, "찐판매가(만)"], 798)
+        self.assertNotIn("대략시세(만)", result.columns)
+        self.assertNotIn("찐판매가(만)", result.columns)
         self.assertNotIn("총스탯", result.columns)
 
     def test_additional_stats_are_compact(self):

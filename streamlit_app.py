@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-30-compact-gem-upgrade-v7"
+APP_BUILD = "2026-07-30-two-window-clean-price-v8"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -1408,7 +1408,6 @@ packet_rows = st.session_state.get("packet_rows", pd.DataFrame())
 packet_dedup = int(st.session_state.get("packet_dedup_count", 0) or 0)
 completed_only = bool(st.session_state.get("packet_completed_only", False))
 visible_packet = pd.DataFrame()
-completed_prices = pd.Series(dtype="float64")
 packet_page_size = 100
 packet_total = 0
 packet_pages = 1
@@ -1429,11 +1428,6 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
         "_sort_time",
         ascending=False,
     ).drop(columns="_sort_time")
-    completed_prices = (
-        visible_packet[visible_packet["status"].eq("completed")]
-        .groupby("itemCode")["unit_price"]
-        .median()
-    )
     packet_total = len(visible_packet)
     packet_pages = max(
         1,
@@ -1558,7 +1552,6 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
     view = packet_view(
         packet_slice,
         include_gems=bool(st.session_state.get("packet_include_gems", False)),
-        approximate_prices=completed_prices,
     )
     st.dataframe(
         _style_status_rows(view),
@@ -1573,11 +1566,9 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
             "아이템",
             "추가스탯",
             "판매가(만)",
-            "대략시세(만)",
             "보석",
             "보석비(원가, 만)",
             "인정보석가치(90%, 만)",
-            "찐판매가(만)",
         ],
         column_config={
             "상태": st.column_config.Column("상태", width="small"),
@@ -1586,20 +1577,14 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
             "아이템": st.column_config.Column("아이템", width="medium"),
             "추가스탯": st.column_config.Column("추가스탯", width="medium"),
             "판매가(만)": st.column_config.NumberColumn(
-                "판매가(만)", format="localized", width="small"
-            ),
-            "대략시세(만)": st.column_config.NumberColumn(
-                "대략시세(만)", format="localized", width="small"
+                "판매가(만)", format="%d", width="small"
             ),
             "보석": st.column_config.Column("보석", width="medium"),
             "보석비(원가, 만)": st.column_config.NumberColumn(
-                "보석원가(만)", format="localized", width="small"
+                "보석원가(만)", format="%d", width="small"
             ),
             "인정보석가치(90%, 만)": st.column_config.NumberColumn(
-                "보석인정가(90%)", format="localized", width="small"
-            ),
-            "찐판매가(만)": st.column_config.NumberColumn(
-                "찐판매가(만)", format="localized", width="small"
+                "보석인정가(90%)", format="%d", width="small"
             ),
         },
     )
