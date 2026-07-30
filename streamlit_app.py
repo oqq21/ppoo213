@@ -216,7 +216,7 @@ def _item_name_css(color_key: str) -> str:
 
 
 def _style_status_rows(frame: pd.DataFrame):
-    """Apply every semantic color to its own cell, never to the whole row."""
+    """Color Completed rows while preserving the gem cell's own status color."""
     if frame is None or frame.empty:
         return frame
     display = frame.copy()
@@ -231,22 +231,29 @@ def _style_status_rows(frame: pd.DataFrame):
         else None
     )
 
+    def row_backgrounds(row: pd.Series) -> list[str]:
+        status_text = str(row.get("상태", ""))
+        completed = "Completed" in status_text or "판매완료" in status_text
+        stripe = (
+            "background-color: #f7f8fc;"
+            if int(row.name) % 2
+            else "background-color: #ffffff;"
+        )
+        return [
+            (
+                "background-color: #eee5fa;"
+                if completed and column != "보석"
+                else stripe
+            )
+            for column in row.index
+        ]
+
     styled = display.style.set_properties(
         **{
             "font-size": "16px",
             "font-weight": "600",
         }
-    ).apply(
-        lambda row: [
-            (
-                "background-color: #f7f8fc;"
-                if int(row.name) % 2
-                else "background-color: #ffffff;"
-            )
-            for _value in row
-        ],
-        axis=1,
-    ).set_table_styles([
+    ).apply(row_backgrounds, axis=1).set_table_styles([
         {
             "selector": "th",
             "props": [
