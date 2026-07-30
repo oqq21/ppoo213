@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-30-two-window-clean-price-v8"
+APP_BUILD = "2026-07-30-readable-packet-grid-v9"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -262,6 +262,20 @@ def _style_status_rows(frame: pd.DataFrame):
             else:
                 status_styles.append("")
         styled = styled.apply(lambda _column: status_styles, axis=0, subset=["상태"])
+        if "판매가(만)" in display.columns:
+            completed_price_styles = [
+                (
+                    "color: #7c3aed; font-weight: 900;"
+                    if "Completed" in str(value) or "판매완료" in str(value)
+                    else "color: #111111; font-weight: 800;"
+                )
+                for value in display["상태"]
+            ]
+            styled = styled.apply(
+                lambda _column: completed_price_styles,
+                axis=0,
+                subset=["판매가(만)"],
+            )
     if item_colors is not None and "아이템" in display.columns:
         name_styles = [_item_name_css(value) for value in item_colors]
         styled = styled.apply(
@@ -1571,20 +1585,20 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
             "인정보석가치(90%, 만)",
         ],
         column_config={
-            "상태": st.column_config.Column("상태", width="small"),
-            "패킷시간": st.column_config.Column("패킷시간", width="small"),
-            "판매소요": st.column_config.Column("판매소요", width="small"),
-            "아이템": st.column_config.Column("아이템", width="medium"),
-            "추가스탯": st.column_config.Column("추가스탯", width="medium"),
+            "상태": st.column_config.Column("상태", width=115),
+            "패킷시간": st.column_config.Column("시간", width=50),
+            "판매소요": st.column_config.Column("소요", width=50),
+            "아이템": st.column_config.Column("아이템", width=150),
+            "추가스탯": st.column_config.Column("추가스탯", width=385),
             "판매가(만)": st.column_config.NumberColumn(
-                "판매가(만)", format="%d", width="small"
+                "판매가(만)", format="%d", width=115
             ),
-            "보석": st.column_config.Column("보석", width="medium"),
+            "보석": st.column_config.Column("보석", width=320),
             "보석비(원가, 만)": st.column_config.NumberColumn(
-                "보석원가(만)", format="%d", width="small"
+                "보석원가(만)", format="%d", width=130
             ),
             "인정보석가치(90%, 만)": st.column_config.NumberColumn(
-                "보석인정가(90%)", format="%d", width="small"
+                "보석인정가(90%)", format="%d", width=145
             ),
         },
     )

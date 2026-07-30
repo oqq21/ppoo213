@@ -170,7 +170,7 @@ class PacketRuleTests(unittest.TestCase):
         ])
         result = packet_view(frame)
         self.assertEqual(result.at[0, "상태"], "🔵 Active")
-        self.assertRegex(result.at[0, "패킷시간"], r"^\d+일 전$")
+        self.assertRegex(result.at[0, "패킷시간"], r"^\d+일전$")
         self.assertEqual(result.at[0, "판매가(만)"], 1_001)
         self.assertEqual(result.at[0, "보석비(원가, 만)"], 225)
         self.assertEqual(result.at[0, "인정보석가치(90%, 만)"], 203)
@@ -311,11 +311,11 @@ class PacketRuleTests(unittest.TestCase):
             captured_at="2026-07-20 13:05:00",
             _sale_duration_minutes=185,
         ))
-        self.assertRegex(format_packet_time(minute_row), r"^\d+일 전$")
-        self.assertRegex(format_packet_time(hour_row), r"^\d+일 전$")
+        self.assertRegex(format_packet_time(minute_row), r"^\d+일전$")
+        self.assertRegex(format_packet_time(hour_row), r"^\d+일전$")
         self.assertNotIn("(", format_packet_time(hour_row))
         self.assertEqual(format_sale_duration(minute_row), "32분")
-        self.assertEqual(format_sale_duration(hour_row), "3시간 5분")
+        self.assertEqual(format_sale_duration(hour_row), "3시간")
 
 
 class PacketDataIntegrationTests(unittest.TestCase):
