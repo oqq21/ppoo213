@@ -41,13 +41,42 @@ def sample_row(**overrides):
 
 
 class PacketRuleTests(unittest.TestCase):
-    def test_positive_simple_condition_uses_total_stat(self):
+    def test_magic_and_int_conditions_use_int_plus_magic_attack(self):
+        frame = pd.DataFrame([
+            sample_row(add_INT=9, add_MAD=15, total_INT=109, total_MAD=115),
+            sample_row(itemCode=1_000_002, add_INT=24, add_MAD=1),
+        ])
+        self.assertEqual(
+            filter_packet_rows(frame, ["마24"])["itemCode"].tolist(),
+            [1_000_001],
+        )
+        self.assertEqual(
+            filter_packet_rows(frame, ["인24"])["itemCode"].tolist(),
+            [1_000_001],
+        )
+
+    def test_zero_magic_condition_uses_combined_additional_value(self):
+        frame = pd.DataFrame([
+            sample_row(add_INT=0, add_MAD=0),
+            sample_row(itemCode=1_000_002, add_INT=1, add_MAD=0),
+            sample_row(itemCode=1_000_003, add_INT=0, add_MAD=1),
+        ])
+        self.assertEqual(
+            filter_packet_rows(frame, ["마0"])["itemCode"].tolist(),
+            [1_000_001],
+        )
+        self.assertEqual(
+            filter_packet_rows(frame, ["인0"])["itemCode"].tolist(),
+            [1_000_001],
+        )
+
+    def test_positive_simple_condition_uses_additional_stat(self):
         frame = pd.DataFrame([
             sample_row(total_DEX=30, base_DEX=5, add_DEX=25),
             sample_row(itemCode=1_000_002, total_DEX=25, base_DEX=0, add_DEX=25),
         ])
-        result = filter_packet_rows(frame, ["덱30"])
-        self.assertEqual(result["itemCode"].tolist(), [1_000_001])
+        result = filter_packet_rows(frame, ["덱25"])
+        self.assertEqual(result["itemCode"].tolist(), [1_000_001, 1_000_002])
 
     def test_beopsin_uses_additional_stats(self):
         frame = pd.DataFrame([
@@ -59,8 +88,8 @@ class PacketRuleTests(unittest.TestCase):
 
     def test_beopsa_total_excludes_magic_attack(self):
         frame = pd.DataFrame([
-            sample_row(total_INT=20, total_LUK=10, total_MAD=50),
-            sample_row(itemCode=1_000_002, total_INT=20, total_LUK=9, total_MAD=1),
+            sample_row(add_INT=20, add_LUK=10, add_MAD=50),
+            sample_row(itemCode=1_000_002, add_INT=20, add_LUK=9, add_MAD=1),
         ])
         result = filter_packet_rows(frame, ["법사30"])
         self.assertEqual(result["itemCode"].tolist(), [1_000_001])
@@ -73,7 +102,7 @@ class PacketRuleTests(unittest.TestCase):
         result = filter_packet_rows(frame, ["힘0"])
         self.assertEqual(result["itemCode"].tolist(), [1_000_001])
 
-    def test_hp_mp_conditions_use_total_for_positive_and_additional_for_zero(self):
+    def test_hp_mp_conditions_use_additional_stats(self):
         frame = pd.DataFrame([
             sample_row(
                 total_HP=120,
@@ -94,7 +123,7 @@ class PacketRuleTests(unittest.TestCase):
             ),
         ])
         self.assertEqual(
-            filter_packet_rows(frame, ["HP120"])["itemCode"].tolist(),
+            filter_packet_rows(frame, ["HP20"])["itemCode"].tolist(),
             [1_000_001],
         )
         self.assertEqual(
@@ -102,8 +131,8 @@ class PacketRuleTests(unittest.TestCase):
             [1_000_002],
         )
         self.assertEqual(
-            filter_packet_rows(frame, ["MP80"])["itemCode"].tolist(),
-            [1_000_001],
+            filter_packet_rows(frame, ["MP10"])["itemCode"].tolist(),
+            [1_000_002],
         )
         self.assertEqual(
             filter_packet_rows(frame, ["MP0"])["itemCode"].tolist(),
@@ -122,7 +151,7 @@ class PacketRuleTests(unittest.TestCase):
         ])
         result = packet_view(frame)
         self.assertEqual(result.at[0, "상태"], "🔵 Active")
-        self.assertEqual(result.at[0, "패킷시간"], "2026-07-20 10:00")
+        self.assertRegex(result.at[0, "패킷시간"], r"^\d+일 전$")
         self.assertEqual(result.at[0, "판매가(만)"], 1_001)
         self.assertEqual(result.at[0, "보석비(원가, 만)"], 225)
         self.assertEqual(result.at[0, "인정보석가치(90%, 만)"], 203)
@@ -242,7 +271,7 @@ class PacketRuleTests(unittest.TestCase):
             [30, 40],
         )
 
-    def test_completed_time_shows_minutes_or_hours_to_sale(self):
+    def test_packet_time_shows_relative_time_without_parentheses(self):
         minute_row = pd.Series(sample_row(
             status="completed",
             captured_at="2026-07-20 10:32:00",
@@ -253,14 +282,9 @@ class PacketRuleTests(unittest.TestCase):
             captured_at="2026-07-20 13:05:00",
             _sale_duration_minutes=185,
         ))
-        self.assertEqual(
-            format_packet_time(minute_row),
-            "2026-07-20 10:32 (32분)",
-        )
-        self.assertEqual(
-            format_packet_time(hour_row),
-            "2026-07-20 13:05 (3시간)",
-        )
+        self.assertRegex(format_packet_time(minute_row), r"^\d+일 전$")
+        self.assertRegex(format_packet_time(hour_row), r"^\d+일 전$")
+        self.assertNotIn("(", format_packet_time(hour_row))
 
 
 class PacketDataIntegrationTests(unittest.TestCase):
@@ -270,14 +294,14 @@ class PacketDataIntegrationTests(unittest.TestCase):
         cls.active = cls.root / "packet_active.parquet"
         cls.completed = cls.root / "packet_completed.parquet"
 
-    def test_dark_arund_attack_20_uses_total_attack_105(self):
+    def test_dark_arund_additional_attack_20_has_total_attack_105(self):
         if not self.active.exists() or not self.completed.exists():
             self.skipTest("packet parquet files are not generated")
         result, _ = search_packet_data(
             self.active,
             self.completed,
             [1_452_015],
-            ["공105"],
+            ["공20"],
         )
         self.assertFalse(result.empty)
         self.assertTrue(result["total_PAD"].eq(105).all())

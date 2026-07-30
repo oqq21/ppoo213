@@ -92,6 +92,10 @@ GEM_OPTION_LABELS = {
 
 GEM_BASE_FEE = 2_250_000
 GEM_VALUE_RATE = 0.9
+WEAPON_SHEETS = {
+    "한손검", "한손도끼", "한손둔기", "단검", "두손검", "두손도끼",
+    "두손둔기", "창", "폴암", "활", "석궁", "아대", "너클", "총",
+}
 
 
 def safe_int(value: Any, default: int = 0) -> int:
@@ -160,6 +164,7 @@ def load_item_catalog(path: Path) -> tuple[dict[int, dict[str, Any]], dict[str, 
                 "item_name": str(name).strip(),
                 "sheet": worksheet.title,
                 "base": base,
+                "attack_gem_warning": worksheet.title in WEAPON_SHEETS,
             }
 
             output = []
@@ -249,6 +254,18 @@ def gem_details(option_codes: Any, prices: dict[int, int]) -> tuple[str, int, in
     return ", ".join(labels), total_cost, recognized
 
 
+def gem_stat_totals(option_codes: Any) -> dict[str, int]:
+    result = {stat: 0 for stat in set(STAT_INDEXES) - {"upgrade_left", "work_count"}}
+    for code in iter_gem_codes(option_codes):
+        grade_base = max(base for base in GEM_GRADES if base <= code)
+        grade_index = tuple(GEM_GRADES).index(grade_base)
+        suffix = code - grade_base
+        _name, stat = GEM_STAT_SUFFIXES[suffix]
+        _label, values = GEM_OPTION_LABELS[suffix]
+        result[stat] += values[grade_index]
+    return result
+
+
 def parse_equipment_rows(
     db_path: Path,
     status: str,
@@ -258,12 +275,15 @@ def parse_equipment_rows(
     completed = status == "completed"
     type_index = 2 if completed else 1
     connection = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
+    cutoff = (datetime.now(KST) - timedelta(days=60)).timestamp()
     cursor = connection.execute(
         f"""
         SELECT packet_time, raw_row_json
         FROM items
         WHERE CAST(json_extract(raw_row_json, '$[{type_index}]') AS INTEGER) = 1
-        """
+          AND packet_time >= ?
+        """,
+        (cutoff,),
     )
 
     records = []
@@ -279,7 +299,7 @@ def parse_equipment_rows(
             code, quantity = safe_int(raw[3], -1), safe_int(raw[4])
             total_price, unit_price = safe_int(raw[9]), safe_int(raw[10])
             internal_time = game_time_to_kst(raw[1])
-            event_time = internal_time
+            event_time = packet_time_to_kst(packet_time)
         else:
             code, quantity = safe_int(raw[2], -1), safe_int(raw[3])
             total_price, unit_price = safe_int(raw[8]), safe_int(raw[9])
@@ -292,6 +312,8 @@ def parse_equipment_rows(
         stats = raw[11] if isinstance(raw[11], list) else []
         options = raw[13] if isinstance(raw[13], list) else []
         gem_text, gem_cost, recognized_gem_value = gem_details(options, gem_prices)
+        gem_stats = gem_stat_totals(options)
+        recognized_codes = list(iter_gem_codes(options))
         record = {
             "status": status,
             "captured_at": packet_time_to_kst(packet_time),
@@ -314,7 +336,18 @@ def parse_equipment_rows(
                 for code in options
                 if safe_int(code) != 0
             ),
+            "attack_gem_warning": bool(item["attack_gem_warning"]),
+            "gem_cell_style": (
+                "red"
+                if item["attack_gem_warning"] and 26_000 not in recognized_codes
+                else "green"
+                if len(recognized_codes) == 3
+                and all(26_000 <= code <= 26_011 for code in recognized_codes)
+                else "white"
+            ),
         }
+        for stat, value in gem_stats.items():
+            record[f"gem_{stat}"] = int(value)
         for name, index in STAT_INDEXES.items():
             record[f"total_{name}"] = safe_int(stats[index]) if index < len(stats) else 0
         records.append(record)
@@ -411,12 +444,25 @@ def main() -> None:
     active_path = args.output_dir / "packet_active.parquet"
     completed_path = args.output_dir / "packet_completed.parquet"
     item_path = args.output_dir / "item.xlsx"
+    gem_path = args.output_dir / "gem_prices.json"
     active.to_parquet(active_path, engine="pyarrow", compression="zstd", index=False)
     completed.to_parquet(completed_path, engine="pyarrow", compression="zstd", index=False)
     write_site_item_file(item_path, web_sheets)
+    gem_path.write_text(
+        json.dumps(
+            {
+                str(code): int(price)
+                for code, price in sorted(prices.items())
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     print(f"[OK] {active_path} ({active_path.stat().st_size / 1024 / 1024:.1f} MB)")
     print(f"[OK] {completed_path} ({completed_path.stat().st_size / 1024 / 1024:.1f} MB)")
     print(f"[OK] {item_path}")
+    print(f"[OK] {gem_path}")
 
 
 if __name__ == "__main__":

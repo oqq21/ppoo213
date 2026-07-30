@@ -18,6 +18,7 @@ DATA_FILES = (
     "요약본.parquet",
     "packet_active.parquet",
     "packet_completed.parquet",
+    "gem_prices.json",
 )
 DEFAULT_RELEASE_API = (
     "https://api.github.com/repos/oqq21/ppoo213/releases/tags/web-data-latest"
@@ -291,8 +292,15 @@ def ensure_data_snapshot(
                     for info in manifest["files"].values()
                 }
             except Exception:
-                # 예전 Release처럼 고정 manifest가 아직 없는 경우에만 기존
-                # GitHub API 조회를 한 번 시도한다.
+                # REST API는 시간당 제한 때문에 기본 경로로 사용하지 않는다.
+                # 새 배포는 항상 고정 manifest를 게시한다. 정말 예전 Release를
+                # 복구할 때만 명시적인 환경변수로 API fallback을 허용한다.
+                allow_api_fallback = (
+                    os.environ.get("PP213_ALLOW_API_FALLBACK") == "1"
+                    or (release_api is not None and manifest_url is None)
+                )
+                if not allow_api_fallback:
+                    raise
                 release_response = requests.get(
                     api_url,
                     params={"v": cache_buster},
