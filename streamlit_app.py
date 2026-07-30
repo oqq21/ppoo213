@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-30-readable-net-item-price-v10"
+APP_BUILD = "2026-07-30-black-low-grade-items-v11"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -198,8 +198,8 @@ def _emph_price(v) -> str:
 
 
 ITEM_NAME_COLORS = {
-    "gray": "#6b7280",
-    "white": "#ffffff",
+    "gray": "#111111",
+    "white": "#111111",
     "blue": "#1677ff",
     "purple": "#9333ea",
     "yellow": "#e3ad00",
@@ -212,13 +212,7 @@ def _item_name_css(color_key: str) -> str:
     key = str(color_key or "").lower()
     key = {"green": "lime", "lightgreen": "lime"}.get(key, key)
     color = ITEM_NAME_COLORS.get(key, ITEM_NAME_COLORS["white"])
-    outline = ""
-    if key not in ITEM_NAME_COLORS or key == "white":
-        outline = (
-            "text-shadow: -1px -1px 0 #4b5563, 1px -1px 0 #4b5563, "
-            "-1px 1px 0 #4b5563, 1px 1px 0 #4b5563;"
-        )
-    return f"color: {color}; font-weight: 800; {outline}"
+    return f"color: {color}; font-weight: 800;"
 
 
 def _style_status_rows(frame: pd.DataFrame):
