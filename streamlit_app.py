@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-30-header-safe-layout-v5"
+APP_BUILD = "2026-07-30-gem-price-grid-v6"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -1492,25 +1492,64 @@ packet_header[7].caption("정렬 packet_time · 중복 판정 3일")
 if st.session_state.get("show_gem_prices"):
     try:
         raw_gem_prices = json.loads(GEM_PRICES_FILE.read_text(encoding="utf-8"))
-        grade_names = {6000: "하급", 16000: "중급", 26000: "상급"}
-        gem_rows = []
+        grade_columns = {
+            6000: "하급가격(만)",
+            16000: "중급가격(만)",
+            26000: "상급가격(만)",
+        }
+        prices_by_option = {}
         for raw_code, price in sorted(raw_gem_prices.items(), key=lambda pair: int(pair[0])):
             code = int(raw_code)
-            base = max(value for value in grade_names if value <= code)
+            base = max(value for value in grade_columns if value <= code)
             suffix = code - base
-            label, values = _packet_store.GEM_OPTION_LABELS[suffix]
-            grade_index = (6000, 16000, 26000).index(base)
-            gem_rows.append({
-                "등급": grade_names[base],
-                "옵션": f"{label}+{values[grade_index]}",
-                "시세(만)": int(round(int(price) / 10_000)),
-            })
+            label, _values = _packet_store.GEM_OPTION_LABELS[suffix]
+            row = prices_by_option.setdefault(
+                suffix,
+                {
+                    "보석종류": label,
+                    "상급가격(만)": pd.NA,
+                    "중급가격(만)": pd.NA,
+                    "하급가격(만)": pd.NA,
+                },
+            )
+            row[grade_columns[base]] = int(round(int(price) / 10_000))
+        gem_rows = [
+            prices_by_option[suffix]
+            for suffix in sorted(prices_by_option)
+        ]
         st.dataframe(
             pd.DataFrame(gem_rows),
             use_container_width=True,
             hide_index=True,
-            height=220,
+            height=400,
             row_height=30,
+            column_order=[
+                "보석종류",
+                "상급가격(만)",
+                "중급가격(만)",
+                "하급가격(만)",
+            ],
+            column_config={
+                "보석종류": st.column_config.TextColumn(
+                    "보석종류",
+                    width="medium",
+                ),
+                "상급가격(만)": st.column_config.NumberColumn(
+                    "상급가격(만)",
+                    format="%d",
+                    width="small",
+                ),
+                "중급가격(만)": st.column_config.NumberColumn(
+                    "중급가격(만)",
+                    format="%d",
+                    width="small",
+                ),
+                "하급가격(만)": st.column_config.NumberColumn(
+                    "하급가격(만)",
+                    format="%d",
+                    width="small",
+                ),
+            },
         )
     except Exception as exc:
         st.warning(f"보석 시세를 읽지 못했습니다: {exc}")
