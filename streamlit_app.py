@@ -1384,6 +1384,7 @@ if isinstance(packet_rows, pd.DataFrame) and not packet_rows.empty:
         column_config={
             "상태": st.column_config.Column("상태", width="small"),
             "패킷시간": st.column_config.Column("패킷시간", width="medium"),
+            "판매소요": st.column_config.Column("판매소요", width="small"),
             "추가스탯": st.column_config.Column("추가스탯", width="large"),
             "판매가(만)": st.column_config.NumberColumn("판매가(만)", format="localized"),
             "대략시세(만)": st.column_config.NumberColumn("대략시세(만)", format="localized"),

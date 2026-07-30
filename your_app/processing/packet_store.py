@@ -461,6 +461,18 @@ def format_packet_time(row: pd.Series) -> str:
     return f"{seconds // 86_400}일 전"
 
 
+def format_sale_duration(row: pd.Series) -> str:
+    duration = row.get("_sale_duration_minutes")
+    if str(row.get("status", "")).lower() != "completed" or pd.isna(duration):
+        return ""
+    minutes = max(0, int(duration))
+    if minutes < 60:
+        return f"{minutes}분"
+    if minutes < 1_440:
+        return f"{minutes // 60}시간 {minutes % 60}분"
+    return f"{minutes // 1_440}일 {minutes % 1_440 // 60}시간"
+
+
 def packet_view(frame: pd.DataFrame, include_gems: bool = False) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame()
@@ -484,6 +496,7 @@ def packet_view(frame: pd.DataFrame, include_gems: bool = False) -> pd.DataFrame
             "completed": "🟣 Completed",
         }).fillna(work["status"]),
         "패킷시간": work.apply(format_packet_time, axis=1),
+        "판매소요": work.apply(format_sale_duration, axis=1),
         "아이템": work["itemName"],
         "_아이템색": work.apply(lambda row: item_color_key(item_color_score(row)), axis=1),
         "추가스탯": work.apply(

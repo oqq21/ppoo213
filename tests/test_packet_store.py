@@ -10,6 +10,7 @@ from your_app.processing.packet_store import (
     deduplicate_active_completed,
     filter_packet_rows,
     format_packet_time,
+    format_sale_duration,
     item_color_key,
     item_color_score,
     packet_view,
@@ -285,6 +286,8 @@ class PacketRuleTests(unittest.TestCase):
         self.assertRegex(format_packet_time(minute_row), r"^\d+일 전$")
         self.assertRegex(format_packet_time(hour_row), r"^\d+일 전$")
         self.assertNotIn("(", format_packet_time(hour_row))
+        self.assertEqual(format_sale_duration(minute_row), "32분")
+        self.assertEqual(format_sale_duration(hour_row), "3시간 5분")
 
 
 class PacketDataIntegrationTests(unittest.TestCase):
