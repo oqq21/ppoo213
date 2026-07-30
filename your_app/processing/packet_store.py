@@ -540,7 +540,6 @@ def format_sale_duration(row: pd.Series) -> str:
 def packet_view(
     frame: pd.DataFrame,
     include_gems: bool = False,
-    approximate_prices: pd.Series | dict | None = None,
 ) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame()
@@ -551,15 +550,6 @@ def packet_view(
         values = _numeric(work, column).clip(lower=0)
         return ((values + 5_000) // 10_000).astype("int64")
 
-    completed_prices = approximate_prices
-    if completed_prices is None:
-        completed_prices = (
-            work[work["status"].eq("completed")]
-            .groupby("itemCode")["unit_price"]
-            .median()
-        )
-    approximate = work["itemCode"].map(completed_prices)
-    approximate_man = (pd.to_numeric(approximate, errors="coerce") / 10_000).round().astype("Int64")
     return pd.DataFrame({
         "상태": work["status"].map({
             "active": "🔵 Active",
@@ -574,11 +564,9 @@ def packet_view(
             axis=1,
         ),
         "판매가(만)": _to_man("unit_price"),
-        "대략시세(만)": approximate_man,
         # 저장된 옛 등급명 대신 옵션코드로 실제 적용 스탯을 표시한다.
         "보석": work.apply(format_gem_text, axis=1),
         "_보석셀": work.get("gem_cell_style", pd.Series("white", index=work.index)),
         "보석비(원가, 만)": _to_man("gem_cost"),
         "인정보석가치(90%, 만)": _to_man("recognized_gem_value"),
-        "찐판매가(만)": _to_man("true_price"),
     })
