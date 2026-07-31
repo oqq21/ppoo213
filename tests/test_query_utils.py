@@ -45,6 +45,33 @@ class QueryBoundaryTests(unittest.TestCase):
             ["쉐이드슈트"],
         )
 
+    def test_spaces_and_special_characters_are_ignored(self):
+        items = pd.DataFrame({
+            "itemName": [
+                "흑견랑포(여)",
+                "적 견랑포 (여)",
+                "흑견랑포(남)",
+            ]
+        })
+        for query in ("견랑포여", "견랑포(여)", "견랑-포 여"):
+            with self.subTest(query=query):
+                self.assertEqual(
+                    items.loc[mask_for_query(items, query), "itemName"].tolist(),
+                    ["흑견랑포(여)", "적 견랑포 (여)"],
+                )
+
+    def test_exact_search_uses_normalized_item_name(self):
+        items = pd.DataFrame({
+            "itemName": ["흑 견랑포(여)", "적견랑포(여)"],
+        })
+        self.assertEqual(
+            items.loc[
+                mask_for_query(items, "@흑견랑포여@"),
+                "itemName",
+            ].tolist(),
+            ["흑 견랑포(여)"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
