@@ -159,6 +159,17 @@ def _effective_search_stat(
     return values
 
 
+def _effective_additional_stat(
+    frame: pd.DataFrame,
+    stat: str,
+    include_gems: bool,
+) -> pd.Series:
+    values = _numeric(frame, f"add_{stat}")
+    if include_gems:
+        values = values + _numeric(frame, f"gem_{stat}")
+    return values
+
+
 def _all_additional_zero(
     frame: pd.DataFrame,
     components: list[str],
@@ -195,6 +206,20 @@ def filter_packet_rows(
             continue
         name, target = match.group(1), int(match.group(2))
 
+        # 법신은 다른 웹 검색 조건과 달리 기본스탯을 제외한
+        # 추가 인트+럭+마력 합을 사용한다. 보석 적용 검색일 때만
+        # 해당 합에 보석 인트/럭/마력을 더한다.
+        if name == "법신":
+            values = sum(
+                (
+                    _effective_additional_stat(work, stat, include_gems)
+                    for stat in ["INT", "LUK", "MAD"]
+                ),
+                start=pd.Series(0, index=work.index),
+            )
+            mask &= values.eq(target)
+            continue
+
         if target == 0:
             if name in ("인", "인트", "마"):
                 values = sum(
@@ -209,17 +234,6 @@ def filter_packet_rows(
                 components = ZERO_COMPONENTS.get(name)
                 if components:
                     mask &= _all_additional_zero(work, components, include_gems)
-            continue
-
-        if name == "법신":
-            values = sum(
-                (
-                    _effective_search_stat(work, stat, include_gems)
-                    for stat in ["INT", "LUK", "MAD"]
-                ),
-                start=pd.Series(0, index=work.index),
-            )
-            mask &= values.eq(target)
             continue
 
         if name in ("인", "인트", "마"):

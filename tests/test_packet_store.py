@@ -79,13 +79,28 @@ class PacketRuleTests(unittest.TestCase):
         result = filter_packet_rows(frame, ["덱25"])
         self.assertEqual(result["itemCode"].tolist(), [1_000_002])
 
-    def test_beopsin_uses_total_stats(self):
+    def test_beopsin_uses_additional_stats(self):
         frame = pd.DataFrame([
-            sample_row(add_INT=1, add_LUK=1, add_MAD=0, total_INT=6, total_LUK=4),
-            sample_row(itemCode=1_000_002, add_INT=2, add_LUK=1, add_MAD=0),
+            sample_row(add_INT=6, add_LUK=2, add_MAD=2, total_INT=11, total_LUK=5, total_MAD=82),
+            sample_row(itemCode=1_000_002, add_INT=2, add_LUK=1, add_MAD=0, total_INT=6, total_LUK=4),
         ])
         result = filter_packet_rows(frame, ["법신10"])
         self.assertEqual(result["itemCode"].tolist(), [1_000_001])
+
+    def test_beopsin_zero_and_gems_use_additional_stats(self):
+        frame = pd.DataFrame([
+            sample_row(total_INT=5, total_LUK=3, total_MAD=80),
+            sample_row(itemCode=1_000_002, add_INT=1, total_INT=6, total_LUK=3, total_MAD=80),
+            sample_row(itemCode=1_000_003, add_INT=5, add_LUK=2, add_MAD=0, gem_INT=3),
+        ])
+        self.assertEqual(
+            filter_packet_rows(frame, ["법신0"])["itemCode"].tolist(),
+            [1_000_001],
+        )
+        self.assertEqual(
+            filter_packet_rows(frame, ["법신10"], include_gems=True)["itemCode"].tolist(),
+            [1_000_003],
+        )
 
     def test_beopsa_total_excludes_magic_attack(self):
         frame = pd.DataFrame([
