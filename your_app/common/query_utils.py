@@ -12,8 +12,23 @@ _OP_AND = "AND"
 _OP_OR  = "OR"
 _OPS = {_OP_AND, _OP_OR}
 
+
+def _normalize_search_text(value: str) -> str:
+    """Ignore whitespace and punctuation while preserving text inside brackets."""
+    return re.sub(
+        r"[^0-9a-z가-힣ㄱ-ㅎㅏ-ㅣ]+",
+        "",
+        str(value or "").lower(),
+    )
+
+
 def _needs_expression_mode(q: str) -> bool:
-    return any(x in q for x in ('"', "(", ")")) or bool(re.search(r"\b(AND|OR)\b", q, flags=re.IGNORECASE))
+    # Parentheses are common in real item names, e.g. 견랑포(여). Parentheses
+    # alone therefore stay literal; AND/OR or quotes explicitly enable the
+    # expression parser, where parentheses still work for grouping.
+    return '"' in q or bool(
+        re.search(r"\b(AND|OR)\b", q, flags=re.IGNORECASE)
+    )
 
 def _tokenize(q: str) -> List[str]:
     s = q.strip()
@@ -69,10 +84,12 @@ def _to_rpn(tokens: List[str]) -> List[str]:
     return out
 
 def _ensure_cache_columns(df):
-    if "itemName_nospace" not in df.columns:
-        df["itemName_nospace"] = df["itemName"].astype(str).str.replace(" ", "", regex=False)
-    if "itemName_choseong" not in df.columns:
-        df["itemName_choseong"] = df["itemName"].map(lambda s: to_choseong(s))
+    # Use new cache names so data loaded by an older app cannot leave stale
+    # space-only cache columns that still contain parentheses or punctuation.
+    if "itemName_search" not in df.columns:
+        df["itemName_search"] = df["itemName"].map(_normalize_search_text)
+    if "itemName_choseong_search" not in df.columns:
+        df["itemName_choseong_search"] = df["itemName_search"].map(to_choseong)
 
 def _mask_for_literal(df, token: str):
     raw = str(token or "").strip()
@@ -86,9 +103,12 @@ def _mask_for_literal(df, token: str):
     if not raw:
         return pd.Series(False, index=df.index)
 
-    is_ch = is_choseong_query(raw)
-    cq = to_choseong(raw) if is_ch else raw.replace(" ", "")
-    col = "itemName_choseong" if is_ch else "itemName_nospace"
+    normalized = _normalize_search_text(raw)
+    if not normalized:
+        return pd.Series(False, index=df.index)
+    is_ch = is_choseong_query(normalized)
+    cq = to_choseong(normalized) if is_ch else normalized
+    col = "itemName_choseong_search" if is_ch else "itemName_search"
     if anchored_start and anchored_end:
         return df[col].eq(cq)
     if anchored_start:
