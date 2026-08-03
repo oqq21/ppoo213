@@ -12,6 +12,12 @@ _OP_AND = "AND"
 _OP_OR  = "OR"
 _OPS = {_OP_AND, _OP_OR}
 
+CATEGORY_SHEET_ALIASES = {
+    "귀고리": "귀고리",
+    "귀거리": "귀고리",
+    "망토": "망토",
+}
+
 
 def _normalize_search_text(value: str) -> str:
     """Ignore whitespace and punctuation while preserving text inside brackets."""
@@ -20,6 +26,11 @@ def _normalize_search_text(value: str) -> str:
         "",
         str(value or "").lower(),
     )
+
+
+def category_sheet_for_query(q: str) -> str:
+    """Return the item.xlsx sheet selected by an exact category query."""
+    return CATEGORY_SHEET_ALIASES.get(_normalize_search_text(q), "")
 
 
 def _needs_expression_mode(q: str) -> bool:
@@ -145,3 +156,11 @@ def mask_for_query(df, q: str):
         else:
             stack.append(_mask_for_literal(df, t))
     return stack[-1] if stack else pd.Series(False, index=df.index)
+
+
+def mask_for_item_query(df, q: str):
+    """Match exact category aliases by sheet, otherwise match item names."""
+    category_sheet = category_sheet_for_query(q)
+    if category_sheet and df is not None and "sheet" in df.columns:
+        return df["sheet"].astype(str).str.strip().eq(category_sheet)
+    return mask_for_query(df, q)

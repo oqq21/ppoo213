@@ -4,7 +4,11 @@ import unittest
 
 import pandas as pd
 
-from your_app.common.query_utils import mask_for_query
+from your_app.common.query_utils import (
+    category_sheet_for_query,
+    mask_for_item_query,
+    mask_for_query,
+)
 
 
 class QueryBoundaryTests(unittest.TestCase):
@@ -71,6 +75,27 @@ class QueryBoundaryTests(unittest.TestCase):
             ].tolist(),
             ["흑 견랑포(여)"],
         )
+
+    def test_category_aliases_select_the_whole_item_sheet(self):
+        items = pd.DataFrame({
+            "itemName": ["장미꽃 귀고리", "캣츠 아이", "타임리스 문라이트", "장미꽃"],
+            "sheet": ["귀고리", "귀고리", "망토", "장비_기타"],
+        })
+        for query in ("귀고리", "귀거리"):
+            with self.subTest(query=query):
+                self.assertEqual(category_sheet_for_query(query), "귀고리")
+                self.assertEqual(
+                    items.loc[mask_for_item_query(items, query), "itemName"].tolist(),
+                    ["장미꽃 귀고리", "캣츠 아이"],
+                )
+        self.assertEqual(category_sheet_for_query("망토"), "망토")
+        self.assertEqual(
+            items.loc[mask_for_item_query(items, "망토"), "itemName"].tolist(),
+            ["타임리스 문라이트"],
+        )
+
+    def test_category_alias_must_be_the_whole_query(self):
+        self.assertEqual(category_sheet_for_query("장미꽃 귀고리"), "")
 
 
 if __name__ == "__main__":

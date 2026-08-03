@@ -100,7 +100,7 @@ ITEM_COLOR_RANGES = (
 )
 
 ITEM_COLOR_STATS = (
-    "STR", "DEX", "INT", "LUK", "PAD", "PDD", "MDD",
+    "STR", "DEX", "INT", "LUK", "PAD", "MAD", "PDD", "MDD",
     "ACC", "EVA", "SPEED", "JUMP",
 )
 

@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-07-30-black-low-grade-items-v11"
+APP_BUILD = "2026-08-03-category-search-magic-color-v12"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -50,6 +50,8 @@ search_packet_data = _packet_store.search_packet_data
 item_color_key = _packet_store.item_color_key
 ensure_data_snapshot = _remote_data.ensure_data_snapshot
 mask_for_query = _query_utils.mask_for_query
+mask_for_item_query = _query_utils.mask_for_item_query
+category_sheet_for_query = _query_utils.category_sheet_for_query
 
 PREFERRED_PARQUET = ["요약본.parquet"]
 DATA_CACHE_DIR = Path(tempfile.gettempdir()) / "ppoo213-data"
@@ -526,7 +528,7 @@ def _parse_stat_text(value) -> dict[str, int]:
 def _item_color_from_stat_text(value) -> str:
     stats = _parse_stat_text(value)
     regular = (
-        "힘", "덱", "인", "럭", "공", "명", "회피",
+        "힘", "덱", "인", "럭", "공", "마", "명", "회피",
         "이속", "점프", "물방", "마방",
     )
     score = sum(int(stats.get(name, 0)) for name in regular)
@@ -686,7 +688,7 @@ def _build_site_search_url(sheet: str, gender: str, reqlevel: int, item_name: st
 def _run_search(df_items: pd.DataFrame, query: str) -> pd.DataFrame:
     q = (query or "").strip()
     if q:
-        m = mask_for_query(df_items, q)
+        m = mask_for_item_query(df_items, q)
         df_filtered = df_items[m].reset_index(drop=True)
     else:
         df_filtered = df_items.copy()
@@ -815,7 +817,7 @@ def _base_stats_from_query(df_items: pd.DataFrame, query: str) -> tuple[str, str
     if not q:
         return "", "검색어를 입력하세요."
     try:
-        m = mask_for_query(df_items, q)
+        m = mask_for_item_query(df_items, q)
     except Exception:
         m = df_items["itemName"].astype(str).str.contains(q, regex=False)
     df_filtered = df_items[m]
@@ -849,7 +851,8 @@ def _apply_api_post_filters(df: pd.DataFrame, tokens: list[str], current_query: 
     d = df.copy()
 
     q = (current_query or "").strip()
-    if q:
+    category_sheet = category_sheet_for_query(q)
+    if q and not category_sheet:
         def _norm_name(s: str) -> str:
             raw = str(s or "").lower().replace("@", "")
             paren_parts = re.findall(r"\(([^)]*)\)", raw)
@@ -892,7 +895,7 @@ def _apply_api_post_filters(df: pd.DataFrame, tokens: list[str], current_query: 
         for k, v in list(rename_map.items()):
             if k in base_df.columns:
                 base_df = base_df.rename(columns={k: v})
-        left_on = ["sheet", "repName"]
+        left_on = ["sheet", "itemName"] if category_sheet else ["sheet", "repName"]
         right_on = ["sheet", "itemName"]
         need_cols = set(right_on + ["baseSTR", "baseDEX", "baseINT", "baseLUK", "baseACC", "baseMAD"])
         base_mini = base_df[[c for c in need_cols if c in base_df.columns]].drop_duplicates()
@@ -960,10 +963,25 @@ def _apply_api_post_filters(df: pd.DataFrame, tokens: list[str], current_query: 
     return d[keep].reset_index(drop=True)
 
 
-def _fetch_api_for_groups(df_groups_sel: pd.DataFrame, tokens: list[str], df_items: pd.DataFrame) -> pd.DataFrame:
+def _fetch_api_for_groups(
+    df_groups_sel: pd.DataFrame,
+    tokens: list[str],
+    df_items: pd.DataFrame,
+    category_sheet: str = "",
+) -> pd.DataFrame:
     out_records = []
 
-    for _, row in df_groups_sel.iterrows():
+    if category_sheet:
+        api_groups = pd.DataFrame([{
+            "대표아이템명": "",
+            "sheet": category_sheet,
+            "gender": "",
+            "reqLevel": 0,
+        }])
+    else:
+        api_groups = df_groups_sel
+
+    for _, row in api_groups.iterrows():
         job_val = ""
         try:
             rep_name = str(row.get("대표아이템명", "")).strip()
@@ -1237,14 +1255,24 @@ with col_left:
     groups_for_link = st.session_state.get("groups")
     open_url = ""
     if groups_for_link is not None and not groups_for_link.empty:
-        row = groups_for_link.iloc[0]
-        open_url = _build_site_search_url(
-            str(row.get("sheet", "")),
-            str(row.get("gender", "")),
-            int(float(row.get("reqLevel", 0) or 0)),
-            str(row.get("대표아이템명", "")),
-            tokens_for_link,
-        )
+        category_sheet = category_sheet_for_query(query)
+        if category_sheet:
+            open_url = _build_site_search_url(
+                category_sheet,
+                "",
+                0,
+                "",
+                tokens_for_link,
+            )
+        else:
+            row = groups_for_link.iloc[0]
+            open_url = _build_site_search_url(
+                str(row.get("sheet", "")),
+                str(row.get("gender", "")),
+                int(float(row.get("reqLevel", 0) or 0)),
+                str(row.get("대표아이템명", "")),
+                tokens_for_link,
+            )
 
     btn_col2, btn_col3, btn_stat_col = st.columns([1.5, 1.8, 3.5], gap="small")
     btn_base = btn_col2.button("대표아이템 스탯", type="primary", use_container_width=True)
@@ -1371,14 +1399,29 @@ if groups is not None and not groups.empty:
     run_now = st.session_state.get("run_now", False)
 
     if run_now:
-        row = groups.iloc[0]
-        target_groups = pd.DataFrame([row])[["대표아이템명", "sheet", "gender", "reqLevel"]]
+        category_sheet = category_sheet_for_query(
+            st.session_state.get("query", "")
+        )
+        if category_sheet:
+            target_groups = groups[[
+                "대표아이템명", "sheet", "gender", "reqLevel"
+            ]].copy()
+        else:
+            row = groups.iloc[0]
+            target_groups = pd.DataFrame([row])[[
+                "대표아이템명", "sheet", "gender", "reqLevel"
+            ]]
 
         with st.spinner("계산 중..."):
             api_sell = pd.DataFrame()
             api_buy = pd.DataFrame()
             if include_api:
-                df_api = _fetch_api_for_groups(target_groups, tokens, df_items)
+                df_api = _fetch_api_for_groups(
+                    target_groups,
+                    tokens,
+                    df_items,
+                    category_sheet=category_sheet,
+                )
                 if not df_api.empty:
                     df_api = _apply_api_post_filters(df_api, tokens, st.session_state.get("query", ""), df_items)
                     sell_mask = df_api.get("tradeType", pd.Series(["sell"] * len(df_api))).astype(str).str.lower().eq("sell")
