@@ -219,6 +219,15 @@ class PacketRuleTests(unittest.TestCase):
         self.assertEqual(item_color_score(row), 23)
         self.assertEqual(item_color_key(item_color_score(row)), "purple")
 
+    def test_item_color_includes_magic_attack(self):
+        row = pd.Series(sample_row(
+            add_INT=8,
+            add_MAD=14,
+            add_MDD=6,
+        ))
+        self.assertEqual(item_color_score(row), 28)
+        self.assertEqual(item_color_key(item_color_score(row)), "purple")
+
     def test_item_color_boundaries(self):
         expected = {
             -1: "gray",
