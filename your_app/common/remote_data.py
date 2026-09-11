@@ -15,7 +15,6 @@ import requests
 
 
 DATA_FILES = (
-    "요약본.parquet",
     "packet_active.parquet",
     "packet_completed.parquet",
     "gem_prices.json",

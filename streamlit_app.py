@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-09-11-forward-packet-matching-v13"
+APP_BUILD = "2026-09-11-remove-summary-v14"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils
@@ -27,8 +27,6 @@ from your_app.api.client import (
     parse_trade_json,
     parse_zero_option_token,
 )
-from your_app.processing.legacy_processor import process_items
-from your_app.processing import sales_store
 from your_app.processing import packet_store as _packet_store
 from your_app.common import remote_data as _remote_data
 
@@ -53,32 +51,14 @@ mask_for_query = _query_utils.mask_for_query
 mask_for_item_query = _query_utils.mask_for_item_query
 category_sheet_for_query = _query_utils.category_sheet_for_query
 
-PREFERRED_PARQUET = ["요약본.parquet"]
 DATA_CACHE_DIR = Path(tempfile.gettempdir()) / "ppoo213-data"
 PACKET_ACTIVE_FILE = DATA_CACHE_DIR / "packet_active.parquet"
 PACKET_COMPLETED_FILE = DATA_CACHE_DIR / "packet_completed.parquet"
 
 
-def _find_sales_file(base_dir: Path) -> Optional[Path]:
-    for name in PREFERRED_PARQUET:
-        p = base_dir / name
-        if p.exists():
-            return p
-    return None
-
-
 @st.cache_resource
 def _load_items(excel_path: str) -> pd.DataFrame:
     return load_item_data(excel_path)
-
-
-@st.cache_resource
-def _init_sales_backend(sales_path: str, data_version: str) -> str:
-    if sales_store.duckdb_available():
-        sales_store.preload_sales_duckdb(sales_path)
-        return "duckdb"
-    sales_store.preload_sales(sales_path, columns=sales_store.MIN_COLUMNS_FOR_PROCESSOR)
-    return "pandas"
 
 
 def _read_tokens(stat1: str, stat2: str, stat3: str) -> list[str]:
@@ -143,22 +123,6 @@ def _format_base_stats_from_row(row: pd.Series, cols: list[str] = BASE_STAT_COLS
             if v != 0:
                 parts.append(f"{c} {v}")
     return "\n".join(parts) if parts else "(모든 기본 스탯 = 0)"
-
-
-def _format_mtime(path: Path) -> str:
-    try:
-        ts = path.stat().st_mtime
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        return "알 수 없음"
-
-
-def _format_ctime(path: Path) -> str:
-    try:
-        ts = path.stat().st_ctime
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        return "알 수 없음"
 
 
 def _relative_time(ts) -> str:
@@ -480,34 +444,6 @@ def _api_view_df(df: pd.DataFrame, sort_key: str = "time") -> pd.DataFrame:
     return out
 
 
-def _proc_view_df(rows: list[dict]) -> pd.DataFrame:
-    if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows)
-    status = (
-        df.get("highlight", "").map(lambda x: "🟢 판매중" if bool(x) else "⚫ 판매완료")
-        if "highlight" in df.columns
-        else pd.Series([""] * len(df), index=df.index)
-    )
-    status = [
-        f"{s} {mark}" if mark else s
-        for s, mark in zip(status, df.get("url", "").map(_my_account_mark) if "url" in df.columns else [""] * len(df))
-    ]
-    color_keys = df.get("stats", "").map(_item_color_from_stat_text)
-    out = pd.DataFrame({
-        "일전": df.get("days_ago", ""),
-        "상태": status,
-        "아이템": df.get("item", ""),
-        "_아이템색": color_keys,
-        "가격(만)": df.get("price", "").map(_emph_price) if "price" in df.columns else "",
-        "판매자": df.get("seller", ""),
-        "스탯": df.get("stats", ""),
-        "비고": df.get("comment", ""),
-        "링크": df.get("url", ""),
-    })
-    return out
-
-
 _STAT_LABEL_ORDER = ["힘", "덱", "인", "럭", "공", "마", "명", "회피", "이속", "점프", "물방", "마방", "HP", "MP"]
 _STAT_LABEL_ALIASES = {"회": "회피", "피": "HP", "hp": "HP", "mp": "MP"}
 
@@ -562,79 +498,6 @@ def _canonical_total_stats(value, item_name: str, df_items: pd.DataFrame, is_add
 
 def _normalize_key_text(value) -> str:
     return re.sub(r"[^0-9a-zA-Z가-힣]", "", str(value or "")).lower()
-
-
-def _combined_market_rows(
-    api_sell: pd.DataFrame,
-    proc_rows: list[dict],
-    df_items: pd.DataFrame,
-) -> pd.DataFrame:
-    records: list[dict] = []
-    api_keys: set[tuple] = set()
-
-    if isinstance(api_sell, pd.DataFrame) and not api_sell.empty:
-        for _, row in api_sell.iterrows():
-            item = str(row.get("itemName", ""))
-            price = int(_price_to_number(row.get("itemPrice")) or 0)
-            seller = str(row.get("global_name", ""))
-            stats_value = row.get("optionSummarize", "")
-            key = (
-                _normalize_key_text(item),
-                price,
-                _canonical_total_stats(stats_value, item, df_items, is_additional=False),
-                _normalize_key_text(seller),
-            )
-            api_keys.add(key)
-            records.append({
-                "_source_order": 0,
-                "_time": pd.to_datetime(row.get("updated_at"), errors="coerce"),
-                "출처": "API",
-                "상태": "판매중" if bool(row.get("tradeStatus", True)) else "판매완료",
-                "아이템": item,
-                "가격": price,
-                "스탯": _normalize_option(stats_value),
-                "판매자": seller,
-                "날짜": _relative_time(row.get("updated_at") or row.get("created_at")),
-                "비고": str(row.get("comment", "")),
-                "링크": str(row.get("profileUrl", "")),
-            })
-
-    for row in proc_rows or []:
-        item = str(row.get("item", ""))
-        price = int(row.get("price_num") or 0)
-        seller = str(row.get("seller", ""))
-        stats_value = row.get("stats", "")
-        key = (
-            _normalize_key_text(item),
-            price,
-            _canonical_total_stats(stats_value, item, df_items, is_additional=True),
-            _normalize_key_text(seller),
-        )
-        if key in api_keys:
-            continue
-        records.append({
-            "_source_order": 1,
-            "_time": pd.to_datetime(row.get("date_raw"), errors="coerce"),
-            "출처": "Parquet",
-            "상태": "판매중" if bool(row.get("highlight", True)) else "판매완료",
-            "아이템": item,
-            "가격": price,
-            "스탯": str(stats_value),
-            "판매자": seller,
-            "날짜": str(row.get("days_ago", "")),
-            "비고": str(row.get("comment", "")),
-            "링크": str(row.get("url", "")),
-        })
-
-    if not records:
-        return pd.DataFrame()
-    frame = pd.DataFrame(records)
-    frame = frame.sort_values(
-        ["_source_order", "_time"],
-        ascending=[True, False],
-        kind="mergesort",
-    )
-    return frame.drop(columns=["_source_order", "_time"]).reset_index(drop=True)
 
 
 def _build_site_search_url(sheet: str, gender: str, reqlevel: int, item_name: str, stat_tokens: list[str]) -> str:
@@ -726,7 +589,6 @@ def _save_history_snapshot(
     tokens: list[str],
     api_sell: pd.DataFrame,
     api_buy: pd.DataFrame,
-    proc_rows: list[dict],
     packet_rows: pd.DataFrame,
 ) -> None:
     q = (query or "").strip()
@@ -740,7 +602,6 @@ def _save_history_snapshot(
         "tokens": list(tokens),
         "api_sell": api_sell.copy() if isinstance(api_sell, pd.DataFrame) else pd.DataFrame(),
         "api_buy": api_buy.copy() if isinstance(api_buy, pd.DataFrame) else pd.DataFrame(),
-        "proc_rows": list(proc_rows) if isinstance(proc_rows, list) else [],
         "packet_rows": packet_rows.copy() if isinstance(packet_rows, pd.DataFrame) else pd.DataFrame(),
     }
     def _same(a, b):
@@ -787,10 +648,9 @@ def _queue_apply_history(h: dict) -> None:
         "stat3": tokens[2] if len(tokens) > 2 else "",
         "reset_pages": True,
     }
-    if "api_sell" in h or "proc_rows" in h or "packet_rows" in h:
+    if "api_sell" in h or "packet_rows" in h:
         pending["api_sell"] = h.get("api_sell", pd.DataFrame())
         pending["api_buy"] = h.get("api_buy", pd.DataFrame())
-        pending["proc_rows"] = h.get("proc_rows", [])
         pending["packet_rows"] = h.get("packet_rows", pd.DataFrame())
         pending["use_cached"] = True
     st.session_state["pending_apply"] = pending
@@ -801,15 +661,6 @@ def _queue_apply_history(h: dict) -> None:
 def _trigger_search() -> None:
     st.session_state["auto_search"] = True
     st.session_state["run_now"] = True
-
-
-def _ensure_sales_loaded(sales_path: str) -> None:
-    if sales_store.is_duckdb():
-        return
-    try:
-        sales_store.get_sales()
-    except Exception:
-        sales_store.preload_sales(sales_path, columns=sales_store.MIN_COLUMNS_FOR_PROCESSOR)
 
 
 def _base_stats_from_query(df_items: pd.DataFrame, query: str) -> tuple[str, str]:
@@ -1141,7 +992,6 @@ except Exception as exc:
     st.error(f"최신 데이터 스냅샷을 받지 못했습니다: {exc}")
     st.stop()
 
-sales_file = _find_sales_file(data_snapshot.directory)
 PACKET_ACTIVE_FILE = data_snapshot.path("packet_active.parquet")
 PACKET_COMPLETED_FILE = data_snapshot.path("packet_completed.parquet")
 GEM_PRICES_FILE = data_snapshot.path("gem_prices.json")
@@ -1149,11 +999,6 @@ GEM_PRICES_FILE = data_snapshot.path("gem_prices.json")
 if not excel_file.exists():
     st.error("item.xlsx 파일이 없습니다. 먼저 업로드/배치해주세요.")
     st.stop()
-if not sales_file:
-    st.error("data-latest에서 요약본.parquet를 찾을 수 없습니다.")
-    st.stop()
-
-mode = _init_sales_backend(str(sales_file), data_snapshot.version)
 df_items = _load_items(str(excel_file))
 
 
@@ -1186,12 +1031,9 @@ def _on_query_change() -> None:
         st.session_state["base_stat_text"] = ""
         st.session_state["base_stat_title"] = ""
 
-mtime_text = _format_mtime(sales_file)
-ctime_text = _format_ctime(sales_file)
 st.markdown(
     f"<div style='text-align:right;font-size:11px;color:#555;'>"
-    f"build: {APP_BUILD} · data: {data_snapshot.version[:10]} · "
-    f"parquet 생성일: {ctime_text} · 최종수정: {mtime_text} · backend: {mode}"
+    f"build: {APP_BUILD} · data: {data_snapshot.version[:10]}"
     f"</div>",
     unsafe_allow_html=True,
 )
@@ -1199,20 +1041,17 @@ st.markdown(
 pending = st.session_state.pop("pending_apply", None)
 if isinstance(pending, dict) and pending:
     for k, v in pending.items():
-        if k in ("api_sell", "api_buy", "proc_rows", "packet_rows", "reset_pages"):
+        if k in ("api_sell", "api_buy", "packet_rows", "reset_pages"):
             continue
         st.session_state[k] = v
     if pending.get("use_cached"):
         st.session_state["api_sell"] = pending.get("api_sell", pd.DataFrame())
         st.session_state["api_buy"] = pending.get("api_buy", pd.DataFrame())
-        st.session_state["proc_rows"] = pending.get("proc_rows", [])
         st.session_state["packet_rows"] = pending.get("packet_rows", pd.DataFrame())
         st.session_state["run_now"] = False
     if pending.get("reset_pages"):
-        st.session_state["proc_page"] = 1
         st.session_state["page_sell"] = 1
         st.session_state["page_buy"] = 1
-        st.session_state["page_parquet"] = 1
         st.session_state["packet_page"] = 1
     try:
         text, title = _base_stats_from_query(df_items, st.session_state.get("query", ""))
@@ -1328,12 +1167,11 @@ with col_left:
                     st.rerun()
 
 with col_right:
-    sell_tab, buy_tab, parquet_tab = st.tabs(["🟢 판매 API", "🔵 구매 API", "🟣 Parquet"])
+    sell_tab, buy_tab = st.tabs(["🟢 판매 API", "🔵 구매 API"])
 
     market_specs = [
         (sell_tab, _api_view_df(st.session_state.get("api_sell", pd.DataFrame()), "time"), "page_sell", "sell"),
         (buy_tab, _api_view_df(st.session_state.get("api_buy", pd.DataFrame()), "time"), "page_buy", "buy"),
-        (parquet_tab, _proc_view_df(st.session_state.get("proc_rows", [])), "page_parquet", "parquet"),
     ]
     for tab, market_view, page_key, key_prefix in market_specs:
         with tab:
@@ -1429,15 +1267,11 @@ if groups is not None and not groups.empty:
                     api_sell = df_api[sell_mask].reset_index(drop=True)
                     api_buy = df_api[buy_mask].reset_index(drop=True)
 
-            _ensure_sales_loaded(str(sales_file))
-            proc_rows = []
             packet_codes: list[int] = []
             for _, row in target_groups.iterrows():
                 selected_items = _selected_items_from_group(df_filtered, row)
                 if not selected_items:
                     continue
-                result = process_items(tokens, row.get("sheet", ""), selected_items, str(excel_file), str(sales_file))
-                proc_rows.extend(result.get(4, []) or [])
                 packet_codes.extend(_selected_item_codes_from_group(df_filtered, row))
 
             packet_rows = pd.DataFrame()
@@ -1455,20 +1289,16 @@ if groups is not None and not groups.empty:
 
         st.session_state["api_sell"] = api_sell
         st.session_state["api_buy"] = api_buy
-        st.session_state["proc_rows"] = proc_rows
         st.session_state["packet_rows"] = packet_rows
         st.session_state["packet_dedup_count"] = packet_dedup_count
-        st.session_state["proc_page"] = 1
         st.session_state["page_sell"] = 1
         st.session_state["page_buy"] = 1
-        st.session_state["page_parquet"] = 1
         st.session_state["packet_page"] = 1
         _save_history_snapshot(
             st.session_state.get("query", ""),
             tokens,
             api_sell,
             api_buy,
-            proc_rows,
             packet_rows,
         )
         st.session_state["run_now"] = False

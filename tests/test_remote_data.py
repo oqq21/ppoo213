@@ -83,6 +83,8 @@ class RemoteDataTests(unittest.TestCase):
             for name in remote_data.DATA_FILES
         }
         manifest = _manifest("test-version", payloads)
+        # Existing releases may still advertise the retired summary asset.
+        manifest["files"].update(_manifest("unused", {"요약본.parquet": b"legacy"})["files"])
         release = _release(manifest)
 
         def fake_get(url, **kwargs):
@@ -92,6 +94,7 @@ class RemoteDataTests(unittest.TestCase):
                 return _Response(json_value=manifest)
             for name, info in manifest["files"].items():
                 if info["asset"] in url:
+                    self.assertNotEqual(name, "요약본.parquet")
                     return _Response(data=payloads[name])
             raise AssertionError(url)
 
@@ -105,6 +108,7 @@ class RemoteDataTests(unittest.TestCase):
                 release_api="https://api.github.com/repos/test/repo/releases/tags/latest",
             )
             self.assertEqual(snapshot.version, "test-version")
+            self.assertFalse(snapshot.path("요약본.parquet").exists())
             for name, expected in payloads.items():
                 self.assertEqual(snapshot.path(name).read_bytes(), expected)
             self.assertTrue((Path(temp) / "test-version" / "manifest.json").exists())

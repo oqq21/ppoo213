@@ -1,5 +1,9 @@
 # 패킷 웹 데이터
 
+웹 앱은 메랜지지 API와 Active/Completed 패킷 데이터만 조회합니다.
+기존 `요약본.parquet` 기반 Parquet 탭은 제거했으며 앱에서 요약본을 다운로드하거나 읽지 않습니다.
+기존 Release manifest에 요약본이 포함되어 있어도 무시합니다.
+
 `build_packet_web_data.py`는 최신 `market_active.sqlite`와
 `market_completed.sqlite`에서 장비만 추출해 Streamlit용 파일을 만듭니다.
 
