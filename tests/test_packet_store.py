@@ -298,6 +298,61 @@ class PacketRuleTests(unittest.TestCase):
             pd.isna(completed_result.at[0, "_sale_duration_minutes"])
         )
 
+    def test_matching_requires_forward_capture_within_72_hours(self):
+        cases = [
+            ("2026-07-20 09:59:59", 0),
+            ("2026-07-20 10:00:00", 0),
+            ("2026-07-20 10:00:01", 1),
+            ("2026-07-23 10:00:00", 1),
+            ("2026-07-23 10:00:01", 0),
+            (None, 0),
+        ]
+        for captured, expected in cases:
+            with self.subTest(captured=captured):
+                active = pd.DataFrame([sample_row()])
+                completed = pd.DataFrame([sample_row(
+                    status="completed", captured_at=captured,
+                )])
+                remaining, result, count = deduplicate_active_completed(active, completed)
+                self.assertEqual(count, expected)
+                self.assertEqual(len(remaining), 1 - expected)
+                self.assertEqual(pd.isna(result.at[0, "_sale_duration_minutes"]), not expected)
+
+    def test_unmatched_completed_displays_blank_duration(self):
+        completed = pd.DataFrame([sample_row(
+            status="completed", captured_at="2026-07-20 12:00:00",
+            _sale_duration_minutes=600,
+        )])
+        for active in [
+            pd.DataFrame(),
+            pd.DataFrame([sample_row(itemCode=9)]),
+            pd.DataFrame([sample_row(captured_at="2026-07-20 13:00:00")]),
+        ]:
+            with self.subTest(active_rows=len(active)):
+                _, result, count = deduplicate_active_completed(active, completed)
+                self.assertEqual(count, 0)
+                self.assertEqual(len(result), 1)
+                self.assertEqual(packet_view(result).at[0, "판매소요"], "")
+
+    def test_missing_active_capture_never_matches(self):
+        active = pd.DataFrame([sample_row(captured_at=None)])
+        completed = pd.DataFrame([sample_row(status="completed")])
+        remaining, result, count = deduplicate_active_completed(active, completed)
+        self.assertEqual(count, 0)
+        self.assertEqual(len(remaining), 1)
+        self.assertTrue(pd.isna(result.at[0, "_sale_duration_minutes"]))
+
+    def test_internal_expiry_does_not_control_matching(self):
+        active = pd.DataFrame([sample_row(internal_time=None)])
+        completed = pd.DataFrame([sample_row(
+            status="completed", captured_at="2026-07-20 12:00:00",
+            internal_time="2026-08-30 12:00:00",
+        )])
+        remaining, result, count = deduplicate_active_completed(active, completed)
+        self.assertEqual(count, 1)
+        self.assertTrue(remaining.empty)
+        self.assertEqual(result.at[0, "_sale_duration_minutes"], 120)
+
     def test_identical_listings_pair_with_nearest_prior_active(self):
         active = pd.DataFrame([
             sample_row(captured_at="2026-07-20 10:00:00"),

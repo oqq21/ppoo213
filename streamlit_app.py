@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-APP_BUILD = "2026-08-03-category-search-magic-color-v12"
+APP_BUILD = "2026-09-11-forward-packet-matching-v13"
 
 from your_app.common.data_loader import load_item_data
 from your_app.common import query_utils as _query_utils

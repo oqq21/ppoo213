@@ -76,10 +76,13 @@ python publish_data_snapshot.py `
 ## 날짜
 
 - Active/Completed 모두 웹 표시와 정렬에는 패킷을 실제로 수집한 `packet_time`(KST)을 사용합니다.
-- Active↔Completed의 3일 중복 판정에는 패킷 행 내부의 `internal_time`을 사용합니다.
+- Active↔Completed는 `0 < Completed.captured_at - Active.captured_at <= 72시간`일 때만 연결합니다.
+- `internal_time`은 Active에서는 만료 예정 시각이므로 연결 시간 판정에 사용하지 않습니다.
 - `captured_at`에는 패킷 수집시각을, `event_time`에는 기존 상태별 시각을 별도로 보존합니다.
 - Active와 짝이 맞는 Completed는 두 `captured_at`의 차이를 판매 소요시간으로 계산해
-  패킷시간 뒤에 60분 미만은 `(n분)`, 60분 이상은 `(n시간)`으로 표시합니다.
+  판매소요 열에 분/시간/일 단위로 표시합니다.
+- 후보가 여러 개이면 가장 가까운 이전 Active 하나를 연결합니다. 시각이 없거나 같거나 역순이면 연결하지 않습니다.
+- 연결할 Active가 없는 Completed는 그대로 표시하며 판매소요는 빈칸으로 둡니다.
 
 ## Active/Completed 중복
 

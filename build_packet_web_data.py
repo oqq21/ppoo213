@@ -318,7 +318,7 @@ def parse_equipment_rows(
             "status": status,
             "captured_at": packet_time_to_kst(packet_time),
             # active=만료 예정시간, completed=판매완료 시간.
-            # 화면에는 표시하지 않고 active↔completed 3일 판정에만 사용한다.
+            # 원본 메타데이터로 보존하며 연결 시간 판정은 captured_at을 사용한다.
             "internal_time": internal_time,
             "event_time": event_time,
             "itemCode": code,

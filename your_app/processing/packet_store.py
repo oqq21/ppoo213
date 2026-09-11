@@ -333,8 +333,7 @@ def deduplicate_active_completed(
 
     active_work = active.copy().reset_index(drop=True)
     completed_work = completed_result
-    active_work["_internal_date"] = pd.to_datetime(active_work["internal_time"], errors="coerce").dt.date
-    completed_work["_internal_date"] = pd.to_datetime(completed_work["internal_time"], errors="coerce").dt.date
+    max_gap = pd.Timedelta(days=days)
     active_work["_captured_time"] = pd.to_datetime(
         active_work["captured_at"],
         errors="coerce",
@@ -369,41 +368,24 @@ def deduplicate_active_completed(
                 else completed_work.at[index, "_captured_time"].value,
             ),
         ):
-            completed_date = completed_work.at[completed_index, "_internal_date"]
-            if pd.isna(completed_date):
-                continue
             chosen = None
-            fallback = None
             completed_captured = completed_work.at[
-                completed_index,
-                "_captured_time",
+                completed_index, "_captured_time"
             ]
+            if pd.isna(completed_captured):
+                continue
             for position in range(len(available) - 1, -1, -1):
-                active_date = active_work.at[available[position], "_internal_date"]
-                if pd.isna(active_date):
+                active_captured = active_work.at[
+                    available[position], "_captured_time"
+                ]
+                if pd.isna(active_captured):
                     continue
-                # active 내부시간은 만료 예정, completed 내부시간은 완료 시각이라
-                # 어느 쪽이 앞설지 고정하지 않고 날짜 절대차를 사용한다.
-                gap = abs((completed_date - active_date).days)
-                if gap <= days:
-                    # 유효한 과거 Active가 없을 때의 기존 중복 제거용 후보.
-                    # 역순 순회라 마지막에 남는 값이 가장 이른 후보가 된다.
-                    fallback = position
-                    active_captured = active_work.at[
-                        available[position],
-                        "_captured_time",
-                    ]
-                    if (
-                        not pd.isna(active_captured)
-                        and not pd.isna(completed_captured)
-                        and active_captured <= completed_captured
-                    ):
-                        # captured_at 오름차순의 역순이므로 판매 직전의
-                        # 가장 가까운 Active가 처음 선택된다.
-                        chosen = position
-                        break
-            if chosen is None:
-                chosen = fallback
+                gap = completed_captured - active_captured
+                # Real-time captures must run Active -> Completed. Never
+                # consume a later Active, even when no prior match exists.
+                if pd.Timedelta(0) < gap <= max_gap:
+                    chosen = position
+                    break
             if chosen is not None:
                 active_index = available.pop(chosen)
                 remove.add(active_index)
@@ -425,11 +407,11 @@ def deduplicate_active_completed(
 
     active_result = active_work.drop(index=list(remove), errors="ignore")
     active_result = active_result.drop(
-        columns=["_internal_date", "_captured_time"],
+        columns=["_captured_time"],
         errors="ignore",
     ).reset_index(drop=True)
     completed_result = completed_work.drop(
-        columns=["_internal_date", "_captured_time"],
+        columns=["_captured_time"],
         errors="ignore",
     ).reset_index(drop=True)
     return active_result, completed_result, len(remove)
@@ -455,7 +437,7 @@ def search_packet_data(
     )
     combined = pd.concat([active, completed], ignore_index=True) if not active.empty or not completed.empty else pd.DataFrame()
     if not combined.empty:
-        # 화면 정렬은 패킷 수신시간, 3일 중복 판정은 위의 internal_time을 사용한다.
+        # Display order and matching both use packet capture time.
         combined["_sort_time"] = pd.to_datetime(combined["captured_at"], errors="coerce")
         combined = combined.sort_values("_sort_time", ascending=False, kind="mergesort").drop(columns="_sort_time")
     return combined.reset_index(drop=True), duplicate_count
